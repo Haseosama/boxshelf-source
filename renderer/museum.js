@@ -1889,7 +1889,8 @@ window.Museum = (() => {
     if (heldCase) { heldCase = null; if (peek) peek.t = 0; snd('slideBack'); return true; }
     if (libHeld && libHeld.rig && libHeld.rig.discT) { libHeld.rig.discT = 0; movieDiscHome(libHeld.rig); snd('discIn'); return true; } // the disc back on its hub
     if (libHeld && libHeld.rig && libHeld.rig.openT) { libHeld.rig.openT = 0; snd('caseClose'); return true; } // the case shut
-    if (libHeld) { libHeld = null; snd('slideBack'); return true; }
+    // (beta.11) a fan issue put back: its stand-in goes now, not on the next drawn frame (a slow or paused draw left it in the rack)
+    if (libHeld) { const h = libHeld; libHeld = null; if (h.temp && rack && rack.items.includes(h)) dropTemp(h); snd('slideBack'); return true; }
     if (fan) { if (!fan.closing) closeFan(false); return true; }
     if (holding) { holding = null; return true; }
     if (!wide) { wide = true; wideSel = wideFromHere(); hooks.onSelect && hooks.onSelect(current()); return true; } return false;
