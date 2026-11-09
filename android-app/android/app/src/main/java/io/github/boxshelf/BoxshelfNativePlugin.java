@@ -106,6 +106,13 @@ public class BoxshelfNativePlugin extends Plugin {
     }
 
     @PluginMethod
+    public void fontScale(PluginCall call) { // (beta.11) Android's own font size (Settings → Display → Font size): 1 is normal → { scale }
+        float s = 1f;
+        try { s = getContext().getResources().getConfiguration().fontScale; } catch (Exception e) { s = 1f; }
+        JSObject r = new JSObject(); r.put("scale", (double) s); call.resolve(r);
+    }
+
+    @PluginMethod
     public void folderAccess(PluginCall call) { // the folders Boxshelf can still read (permissions survive reboots, not uninstalls)
         JSArray a = new JSArray();
         for (android.content.UriPermission p : getContext().getContentResolver().getPersistedUriPermissions()) if (p.isReadPermission()) a.put(p.getUri().toString());

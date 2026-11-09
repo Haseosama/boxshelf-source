@@ -113,7 +113,9 @@ const folderName=p=>{const L=String(p||"").split(/[\\/]/).filter(Boolean);return
 function consolesReady(){const on=consoleList().filter(c=>sysCfg(c.id).enabled!==false);return `${on.filter(c=>conState(c)==="ok").length}/${on.length}`}
 const melody=()=>voiceOf(gp("ui.soundTheme"))==="melody";
 const voiceOf=v=>({arcade:"musicbox",pulse:"musicbox",glass:"aero",wood:"aero",xylo:"melody",jazz:"melody"})[v]||v||"aero";
-const swapAB=()=>{const v=gp("ui.confirmButton")||"auto";return v==="b"||(v==="auto"&&padStyle()==="nintendo")};
+// (beta.11) Match my controller: the pad in your hands (padKind), not the pictures chosen in Button prompts (padStyle)
+const swapAB=()=>{const v=gp("ui.confirmButton")||"auto";return v==="b"||(v==="auto"&&padKind()==="nintendo")};
+function padKind(){if(window.BS_padStyleOf)return BS_padStyleOf(padId);return /054c|dualsense|dualshock|playstation|^wireless controller/i.test(padId)?"ps":/057e|nintendo|pro controller|joy-con/i.test(padId)?"nintendo":"xbox"}
 function padStyle(){const p=gp("ui.buttons")||"auto";if(p==="xbox"||p==="ps"||p==="nintendo")return p;if(window.BS_padStyleOf)return BS_padStyleOf(padId); /* the shelf's detection: maker and model, and what's behind an XInput pad */return /054c|dualsense|dualshock|playstation|^wireless controller/i.test(padId)?"ps":/057e|nintendo|pro controller|joy-con/i.test(padId)?"nintendo":"xbox"}
 // the shelf's prompts changed with the pad in use (another pad, or what's behind an XInput one): pictures follow
 addEventListener("bs-custom-themes",()=>{try{syncCustomThemes();if(typeof render==="function"&&window.Settings&&Settings.isOpen&&Settings.isOpen())render()}catch{}});
@@ -194,13 +196,18 @@ function build(){
     H("Starting up"),
     C("Startup animation","ui.bootIntro",[["ripple","Logo + ripple"],["fade","Logo + fade"],["off","Off"]],"ripple","The Boxshelf logo shows while your shelf loads, then the games come in: the one you were on first, rippling out to each side, or the whole shelf fading up together. Off starts straight on the shelf.",{keys:"boot intro",live:v=>{try{localStorage.setItem("bootIntro",v)}catch{}}}),
     C("Open into","ui.openInto",[["last","Last shelf"],["home","Home shelf"],["museum","Museum"]],"last","Where Boxshelf goes when it starts: the console shelf you were on last time, Home (continue playing and favourites), or straight into the museum.",{more:"Museum: after the Boxshelf logo the lights come up in the museum overview (a little slower to start than the shelf). B still takes you to the shelf any time.",keys:"start startup boot launch open first home museum shelf",live:v=>applyUi({openInto:v})}),
+    // (beta.11, Android) how big everything is: the page's layout width (android-early.js). Automatic: by the screen's
+    // size and Android's font size. A change redraws the page (settings saved first)
+    ...(window.bsPlatform&&bsPlatform.os==="android"?[C("Text size","ui.textSize",[["auto","Automatic"],["normal","Normal"],["large","Large"],["larger","Larger"]],"auto","How big the text and everything else is. Automatic goes by your screen's size and Android's font size.",{keys:"text size font bigger larger small read zoom scale accessibility",live:v=>{try{localStorage.setItem("bs-textsize",v)}catch{}const cur=window.__bsLayoutW||1440;toast("Resizing…");Promise.resolve(save()).catch(()=>{}).then(()=>setTimeout(()=>{if(({normal:1440,large:1280,larger:1152})[v]!==cur||v==="auto")location.reload()},350))}})]:[]),
     H("More"),
-    M("Screen & motion","display-more","Which screen, fullscreen, fitting the picture to your TV and reduce motion.","Set these once for your TV.",[
+    M("Screen & motion","display-more","Which screen, fullscreen, fitting the picture to your TV, reduce motion and the box shine.","Set these once for your TV.",[
       T("Start in fullscreen","ui.startFullscreen",true,"Opens Boxshelf fullscreen. Press F11 any time to switch.",{keys:"full screen window"}),
       T("Hide the taskbar during games","ui.hideTaskbar",true,"Nothing but Boxshelf and your game on screen: the Windows taskbar is hidden while a game starts, runs and closes, and comes back on the shelf.",{keys:"taskbar windows bar immersion flash desktop start menu"}),
       C("Screen","ui.display",()=>displays,"","Which screen Boxshelf opens on, for a PC with both a monitor and a TV. Games open on the same screen.",{when:()=>!!(displays&&displays.length),keys:"monitor tv hdmi output display second",live:v=>{if(api.moveToDisplay){const d=(displays||[]).find(x=>x[0]===v);Promise.resolve(api.moveToDisplay(v||(d&&d[2])||"")).catch(e=>toast(errMsg(e)))}}}),
       S("Fit to TV","ui.safeArea",100,90,100,1,v=>v+"%","Shrinks everything slightly if your TV cuts off the edges of the picture (overscan). Watch the corners of the screen while you change it.",{keys:"overscan safe area edges cut off zoom",live:v=>{applyUi({safeArea:v});fit()}}),
       T("Reduce motion","ui.reduceMotion",false,"Tones down the startup ripple, the museum walk-in and the moving theme backgrounds.",{keys:"animation accessibility motion sickness",live:v=>{applyUi({reduceMotion:v});document.body.classList.toggle("bss-reduce",!!v)}}),
+      // (beta.11) people asked to turn the landing shine down or off (here with the other motion settings, not on the Display page itself)
+      C("Box shine","ui.boxShine",[["on","On"],["less","Less often"],["off","Off"]],"on","The light that sweeps across a box when you stop on it. Less often: only once you stay on a box for a moment.",{keys:"shine glance gleam sheen sweep light shimmer animation box",live:v=>applyUi({boxShine:v})}),
     ]),
   ]},
   {g:"Look & sound",id:"perf",name:"Performance",ic:"perf",lead:"One setting for how much Boxshelf asks of your graphics card.",rows:[
@@ -228,9 +235,15 @@ function build(){
   ]},
   {g:"Boxshelf",id:"shelf",name:"Shelf",ic:"shelf",lead:"How the shelf behaves: console order, shuffle and the idle show.",rows:[
     A("Console order","Reorder","The order of the consoles along the top. Home always comes first.",()=>openSub({kind:"order"}),{keys:"shelf order arrange tabs move"}),
+    /* (beta.11, Windows and Linux) the first-run tour again (tour.js): Settings closes, then it starts on the shelf */
+    ...(window.bsPlatform&&bsPlatform.os==="android"?[]:[A("Show the tour","Start","A one-minute look at the basics: consoles, Details, Inspect, the quick menu, the Art Studio and where to add games.",()=>{Promise.resolve(close()).then(()=>setTimeout(()=>{if(window.BS_TOUR)BS_TOUR.start()},450))},{keys:"tour tutorial intro help guide basics how learn"})]),
     // (beta.7) your own shelves (Details → Collections adds games to them): renamed and deleted here
     M("Collections","shelf-cols","Shelves of your own, mixing games from any console (Details → Collections adds a game). Rename or delete them here.","Each one is a shelf beside Home.",[{t:"dyn",fn:colManageRows}],{keys:"collections lists playlists own shelves"}),
-    T("Shuffle from every shelf","ui.shuffleAll",true,"Surprise me picks from all consoles instead of just the shelf you're on.",{keys:"random surprise"}),
+    // (beta.11) one row: where Surprise me picks from, or Off (no Surprise me case on the shelves); it was "Shuffle from every shelf"
+    C("Surprise me","ui.surpriseMe",[["all","From every shelf"],["shelf","From this shelf"],["off","Off"]],"all","The Surprise me case at the front of each shelf picks a random game: from all your consoles, or only the shelf you're on. Off takes the case away.",
+      {keys:"random surprise shuffle hide remove case tile",get:()=>gp("ui.surpriseMe")==="off"?"off":gp("ui.shuffleAll")===false?"shelf":"all",set:v=>{if(v==="off")sp("ui.surpriseMe","off");else{sp("ui.surpriseMe","on");sp("ui.shuffleAll",v==="all")}},live:()=>shelf("reshelf")}),
+    // (beta.11) the "Open Dolphin" (etc.) case at the front of each console's shelf can go too
+    T("Emulator case","ui.emuCase",true,"The Open Dolphin (or other emulator) case at the front of each console's shelf, which starts the emulator on its own. Off takes it away.",{keys:"emulator case tile open dolphin hide remove shelf",live:()=>shelf("reshelf")}),
     T("Attract mode","ui.attract",true,"After a few idle minutes the shelf drifts through your boxes on its own, with the HUD faded, like a store display.",{keys:"idle screensaver demo"}),
     C("Attract mode starts after","ui.attractMinutes",[[2,"2 min"],[3,"3 min"],[5,"5 min"],[10,"10 min"],[20,"20 min"]],3,"How long without input before the tour begins.",{keys:"idle",live:v=>applyUi({attractMinutes:v})}),
     C("Dim the screen after","ui.dimMinutes",[[0,"Never"],[10,"10 min"],[20,"20 min"],[30,"30 min"]],0,"Fades the screen to black after a long idle spell, to protect OLED TVs. Any button wakes it.",{keys:"oled burn in screensaver blank sleep",live:v=>applyUi({dimMinutes:v})}),
@@ -490,10 +503,11 @@ function conPages(id){
   // Switch 2 (Windows): which Eglantine build Play starts. "Ask each time" (the default) shows the list at Play; a build
   // picked here becomes the shelf's emulator and Play starts in it straight away. A game's own Details → Emulator wins.
   // (beta.3) a page of its own: every build (the list Play shows), Ask each time, and builds or folders kept elsewhere
-  if(id==="sw2"&&sw2Row())rows.splice(2,0,M("Builds","sw2-builds","Which Eglantine build starts your Switch 2 games: every build Boxshelf found (the same list Play shows), Ask each time, and builds kept in other folders.",
-    "The same list Play shows. Ask each time shows it at Play; choose a build to always start in it. A game's own choice (Details → Emulator) still comes first.",[{t:"dyn",fn:sw2BuildRows}],
+  // (beta.11) called "Emulators (forks)": one list to add to and remove from
+  if(id==="sw2"&&sw2Row())rows.splice(2,0,M("Emulators (forks)","sw2-builds","Your Switch 2 emulators (Eglantine and its forks): add one, remove one, or choose which one Play starts. The same list Play shows.",
+    "The same list Play shows. Ask each time shows it at Play; choose one to always start in it. A game's own choice (Details → Emulator) still comes first.",[{t:"dyn",fn:sw2BuildRows}],
     {keys:"build builds fork forks eglantine lichii orchid selevet version branch which emulator choose",btn:()=>{const b=sw2Fixed();return b?b.label||progName(b.exe):"Ask each time"},
-     sub:()=>(sw2Want(),{text:sw2b==null?"Looking for builds…":sw2b.length?`${sw2b.length} build${sw2b.length===1?"":"s"} found`:"No builds found yet · add one here",cls:sw2b&&!sw2b.length?"warn":""})}));
+     sub:()=>(sw2Want(),{text:sw2b==null?"Looking for emulators…":sw2b.length?`${sw2b.length} emulator${sw2b.length===1?"":"s"} · add or remove here`:"None yet · add one here",cls:sw2b&&!sw2b.length?"warn":""})}));
   const d=det&&det.systems&&det.systems[id];
   if(d&&d.emulator&&d.emulator!==c.emulator)rows.push(A("Use the emulator found","Use","Boxshelf found this copy. Use it for this shelf.",()=>{c.emulator=d.emulator;changed({rescan:true})},{sub:()=>({text:d.emulator}),ns:true}));
   const twin=id==="wii"?"gc":id==="gc"?"wii":null;
@@ -760,7 +774,7 @@ function customRows(){if(!pcSt)setTimeout(pcStatus,0);cfg.pc=cfg.pc||{epic:true,
   return rows}
 const sw2Low=x=>String(x||"").toLowerCase();
 function sw2Fixed(){const c=sysCfg("sw2");if(c.askBuild!==false||!c.emulator)return null;return (sw2b||[]).find(b=>sw2Low(b.exe)===sw2Low(c.emulator))||{exe:c.emulator,label:progName(c.emulator)}}
-let sw2Asking=0,sw2In=false; // (the newest ask wins; sw2In: one is on its way)
+let sw2Asking=0,sw2In=false,sw2Rm=false; // (the newest ask wins; sw2In: one is on its way; sw2Rm: beta.11, the list's rows remove)
 function sw2Reload(){sw2b=null;sw2In=true;bump();const me=++sw2Asking;Promise.resolve(save()).then(()=>api.sw2Builds("")).then(r=>{if(me===sw2Asking){sw2b=r&&r.builds||[];sw2In=false;bump()}}).catch(()=>{if(me===sw2Asking){sw2b=[];sw2In=false;bump()}})}
 // the list is asked for when it's missing, however the page was reached (a link straight to Switch 2 skipped the console
 // tile's own ask, and the row said "Looking for builds…" for ever)
@@ -768,19 +782,28 @@ function sw2Want(){if(sw2b==null&&!sw2In)setTimeout(()=>{if(sw2b==null&&!sw2In)s
 function sw2BuildRows(){sw2Want();const c=sysCfg("sw2"),fx=sw2Fixed(),L=sw2b||[],day=t=>new Date(t).toLocaleDateString(undefined,{month:"short",day:"numeric",year:"numeric"}),rows=[];
   const choose=exe=>{if(exe){c.askBuild=false;c.emulator=exe}else c.askBuild=true;play("tick",1);changed(null)};
   rows.push(A("Ask each time",()=>sw2Fixed()?"Choose":"✓ Chosen","Play shows the list of builds, starting on the one you last used for that game.",()=>choose(null),{sub:()=>({text:"Play shows the list"})}));
-  rows.push({t:"head",text:sw2b==null?"Looking for builds…":L.length?`${L.length} build${L.length===1?"":"s"} found`:"No builds found yet: add a build or a folder of builds below"});
+  // (beta.11) one list: every emulator (found or added) with Always use and Remove under it, and one Add button above.
+  // Remove takes a found one off the list (sw2.buildHidden) or forgets an added one (sw2.buildExes); nothing is deleted.
+  const arr=k=>Array.isArray(c[k])?c[k]:[],has=(a,x)=>a.some(y=>sw2Low(y)===sw2Low(x));
+  rows.push({t:"head",text:sw2b==null?"Looking for your emulators…":L.length?`Your Switch 2 emulators (${L.length})`:"No Switch 2 emulators yet: add one below"});
+  rows.push(A("+ Add an emulator","Browse…","Choose one emulator's program (eglantine.exe, lichii.exe, orchid.exe…), wherever it is. It joins this list and the one Play shows.",async()=>{const f=await pick({kind:"file",title:"Choose a Switch 2 emulator (eglantine.exe, lichii.exe, orchid.exe…)",filters:/Win/.test(navigator.platform)?[{name:"Programs",extensions:["exe"]}]:undefined}),x=typeof f==="string"?f:f&&f.path;if(!x)return;
+    const wasHidden=has(arr("buildHidden"),x);c.buildHidden=arr("buildHidden").filter(y=>sw2Low(y)!==sw2Low(x));
+    if(!wasHidden&&(has(arr("buildExes"),x)||L.some(b=>sw2Low(b.exe)===sw2Low(x))))return toast("That emulator is already in the list");
+    if(!has(arr("buildExes"),x)&&!L.some(b=>sw2Low(b.exe)===sw2Low(x)))c.buildExes=[...arr("buildExes"),x].slice(0,20);changed(null);sw2Reload();toast("Emulator added")},{keys:"add emulator fork build branch eglantine lichii orchid"}));
+  const removeOne=b=>{const x=b.exe;if(has(arr("buildExes"),x))c.buildExes=arr("buildExes").filter(y=>sw2Low(y)!==sw2Low(x));else if(!has(arr("buildHidden"),x))c.buildHidden=[...arr("buildHidden"),x].slice(-50);
+    if(c.askBuild===false&&sw2Low(c.emulator)===sw2Low(x))c.askBuild=true; /* it was the one Play always started: Play asks again */
+    changed(null);sw2Reload();toast(`${b.label} removed from the list (nothing was deleted)`)};
+  // one row per emulator (the page stays short): A sets it as the one Play always starts, or, with "Remove an emulator"
+  // switched on, takes it off the list (pressed twice; the confirmation is keyed by the path, beta.10)
   L.forEach(b=>{const on=()=>{const f=sw2Fixed();return !!f&&sw2Low(f.exe)===sw2Low(b.exe)},first=()=>!sw2Fixed()&&sw2Low(sysCfg("sw2").emulator)===sw2Low(b.exe);
-    rows.push(A(b.label,()=>on()?"✓ Always":"Always use",`Always start Switch 2 games in this build.\n${b.exe}`,()=>choose(b.exe),
-      {ns:true,keys:"build fork "+b.label,sub:()=>({text:`${day(b.date)}${b.nup?" · opens .nup":""}${first()?" · Play offers it first":""}`})}))});
-  rows.push({t:"head",text:"Builds kept somewhere else"});
-  rows.push(A("Add a folder of builds","Browse…","A folder holding several builds (your forks). Boxshelf looks four folders deep inside it.",async()=>{const f=await pick({kind:"folder",title:"Choose a folder of Eglantine builds"}),d=typeof f==="string"?f:f&&f.path;if(!d)return;
-    const a=Array.isArray(c.buildDirs)?c.buildDirs:[];if(a.some(x=>sw2Low(x)===sw2Low(d)))return toast("That folder is already in the list");c.buildDirs=[...a,d].slice(0,20);changed(null);sw2Reload();toast("Looking for builds in "+folderName(d))}));
-  rows.push(A("Add a build","Browse…","One build's program (eglantine.exe, lichii.exe, orchid.exe…), wherever it is.",async()=>{const f=await pick({kind:"file",title:"Choose an Eglantine build",filters:[{name:"Programs",extensions:["exe"]}]}),x=typeof f==="string"?f:f&&f.path;if(!x)return;
-    const a=Array.isArray(c.buildExes)?c.buildExes:[];if(a.some(y=>sw2Low(y)===sw2Low(x))||L.some(b=>sw2Low(b.exe)===sw2Low(x)))return toast("That build is already in the list");c.buildExes=[...a,x].slice(0,20);changed(null);sw2Reload();toast("Build added")}));
-  // (beta.10) by path, not by place in the list: removing one shifted an armed confirmation onto the next
-  const drop=(k,v,what)=>{const a=(c[k]||[]).slice(),j=a.indexOf(v);if(j>=0)a.splice(j,1);c[k]=a;changed(null);sw2Reload();toast(what+" removed from the list (nothing was deleted)")};
-  (Array.isArray(c.buildDirs)?c.buildDirs:[]).forEach(d=>rows.push(A("Folder · "+folderName(d),"Remove",`Builds in this folder are listed. Remove takes it off the list; nothing is deleted.\n${d}`,()=>twice("sw2d:"+d,()=>drop("buildDirs",d,"Folder"),"Press again to remove this folder"),{ns:true,ask:"sw2d:"+d})));
-  (Array.isArray(c.buildExes)?c.buildExes:[]).forEach(x=>rows.push(A("Build · "+progName(x),"Remove",`Remove takes it off the list; nothing is deleted.\n${x}`,()=>twice("sw2x:"+x,()=>drop("buildExes",x,"Build"),"Press again to remove this build"),{ns:true,ask:"sw2x:"+x})));
+    rows.push(A(b.label,()=>sw2Rm?"Remove":on()?"✓ Always":"Always use",`Always start Switch 2 games in this emulator (with Remove an emulator on: take it off the list).\n${b.exe}`,()=>sw2Rm?twice("sw2r:"+b.exe,()=>removeOne(b),"Press again to remove it"):choose(b.exe),
+      {ns:true,ask:"sw2r:"+b.exe,keys:"build fork emulator "+b.label,sub:()=>({text:`${day(b.date)}${b.nup?" · opens .nup":""}${first()?" · Play offers it first":""}`})}))});
+  if(L.length)rows.push(A("Remove an emulator",()=>sw2Rm?"Done":"Choose…","Switches the list above to Remove: press an emulator twice to take it off the list. Nothing is deleted.",()=>{sw2Rm=!sw2Rm;play("tick",1);bump()},{ns:true,keys:"remove delete hide emulator fork"}));
+  if(arr("buildHidden").length)rows.push(A(`Show removed emulators (${arr("buildHidden").length})`,"Show","Puts every emulator you removed back on the list.",()=>{c.buildHidden=[];changed(null);sw2Reload();toast("Removed emulators are back on the list")},{ns:true}));
+  rows.push({t:"head",text:"Folders of emulators"});
+  rows.push(A("Add a folder of emulators","Browse…","A folder holding several emulators (your forks): every one inside it is listed. Boxshelf looks four folders deep.",async()=>{const f=await pick({kind:"folder",title:"Choose a folder of Switch 2 emulators"}),d=typeof f==="string"?f:f&&f.path;if(!d)return;
+    if(has(arr("buildDirs"),d))return toast("That folder is already in the list");c.buildDirs=[...arr("buildDirs"),d].slice(0,20);changed(null);sw2Reload();toast("Looking for emulators in "+folderName(d))}));
+  arr("buildDirs").forEach(d=>rows.push(A("Folder · "+folderName(d),"Remove",`Emulators in this folder are listed. Remove takes the folder off the list; nothing is deleted.\n${d}`,()=>twice("sw2d:"+d,()=>{c.buildDirs=arr("buildDirs").filter(y=>y!==d);changed(null);sw2Reload();toast("Folder removed from the list (nothing was deleted)")},"Press again to remove this folder"),{ns:true,ask:"sw2d:"+d})));
   return rows}
 
 /* ---------- search ---------- */
@@ -1193,9 +1216,9 @@ function route(page,o){if(!page)return;o=o||{};
   // Details → Box art: straight to that game's mix (B goes up to its console's games, then the Art page)
   // Details → Choose manual…: straight to that game's manuals (B: the Manual row, then its console's games, then the Art page)
   if(page==="manualgame"||page==="manualstudio"){goSecId("art");focus="page";rowI=0;if(!api.manualStudio||!o.systemId)return;inMore("art-manuals");sRet=-1;stack=[];
-    if(page==="manualgame"&&o.file){stack=[{v:"mgames",sys:o.systemId,i:0,y:0,zone:"grid"}];studio={v:"mpick",sys:o.systemId,file:o.file,title:o.title||"",i:0,y:0}}else studio={v:"mgames",sys:o.systemId,i:0,y:0};sSig="";return}
+    if(page==="manualgame"&&o.file){stack=[{v:"mgames",sys:o.systemId,i:0,y:0,zone:"grid"}];studio={v:"mpick",sys:o.systemId,file:o.file,title:o.title||"",i:0,y:0};sDirect=studio}else studio={v:"mgames",sys:o.systemId,i:0,y:0};sSig="";return}
   if(page==="artgame"||page==="artstudio"){goSecId("art");focus="page";rowI=0;if(!api.artStudio||!o.systemId)return;inMore("art-studio");sRet=-1;stack=[];
-    if(page==="artgame"&&o.file){stack=[{v:"games",sys:o.systemId,i:0,y:0,zone:"grid"}];studio={v:"pick",sys:o.systemId,file:o.file,title:o.title||"",part:"front",i:-1,y:0}}
+    if(page==="artgame"&&o.file){stack=[{v:"games",sys:o.systemId,i:0,y:0,zone:"grid"}];studio={v:"pick",sys:o.systemId,file:o.file,title:o.title||"",part:"front",i:-1,y:0};sDirect=studio}
     else studio={v:"games",sys:o.systemId,i:0,y:0};sSig="";return}
   if(consoleList().some(c=>c.id===page)){goSecId("consoles");ci=tileList().findIndex(c=>c.id===page);subRet=0;sub={kind:"console",id:page};rowI=0;focus="page";if(page==="gc"&&api.findIpl&&iplCap())api.findIpl("gc").then(r=>{ipl=r;bump()}).catch(()=>{});return}
   const m=PAGE_MAP[page];if(!m)return;if(m.svc){goSecId("acct");focus="page";rowI=0;subRet=Math.max(0,rowsOf(sec()).findIndex(r=>r.status===m.svc));sub={kind:"svc",id:m.svc};return}const [id,label]=Array.isArray(m)?m:[m];goSecId(id);focus="page";rowI=0;if(label){const is=r=>r.label===label||r.was===label; /* (was: a row a platform renamed keeps its old name for links) */let k=rowsOf(sec()).findIndex(is);
@@ -1204,7 +1227,7 @@ function route(page,o){if(!page)return;o=o||{};
     if(k>=0)rowI=k}}
 // a deep link into one of the current section's sub-pages: B comes back to the row that opens it
 function inMore(id){const at=rowsOf(sec()).findIndex(r=>r.pg===id);if(at<0)return;subRet=at;sub={kind:"more",id};rowI=0}
-function prep(inf,opts){opts=opts||{};ensureDom();openId++;info=inf;cfg=clone(inf.config);ensureCfg();colRowsBy.clear();ADD.rows=null;COV.n=null; /* (beta.8) rows built for the last visit held that visit's copy of the settings */
+function prep(inf,opts){opts=opts||{};ensureDom();openId++;info=inf;cfg=clone(inf.config);ensureCfg();colRowsBy.clear();ADD.rows=null;COV.n=null;sw2Rm=false;sDirect=0; /* (beta.8) rows built for the last visit held that visit's copy of the settings */
   studioClear();sRet=0;sInfo=null;sInfoBusy=false;sGames={};sCands={};sSets={};sBusy={};needRescan=false;raChanged=false;pending=false;raEmu=null;emuAsk=null;listSig="";edit=null;grab=null;results=null;query="";preSearch=null;sub=null;secI=0;rowI=0;ci=0;focus="side";infoOpen=false;det=null;ipl=null;pathOk={};status={};askT={};displays=null;outputs=null;hidden=null;readWhere=null;readOld=null;mInfo=null;mInfoBusy=false;mGames={};mCands={};mBusy={};mMsg={};
   device=document.body.classList.contains("pad-input")?"pad":"key";
   try{const g=window.BS_activePad?window.BS_activePad():[...(navigator.getGamepads?navigator.getGamepads():[])].find(x=>x&&x.connected);if(g)padId=g.id}catch{}
@@ -1247,7 +1270,9 @@ function resume(){if(!isOpen)return;if(legacyKey()!==legacySnap||(Setup.download
 // nothing moves. Big grids only draw the rows in view; positions are worked out from one size read per build (never
 // per move or per frame), and every picture decodes off the main thread (img.decode()).
 // the "disc" part is named for what the console's games come on (1.73.5): a cartridge on Switch and 3DS, a UMD on PSP
-const MEDIA_WORD=id=>id==="sw"||id==="sw2"||id==="n3ds"?"Cartridge":id==="psp"?"UMD":"Disc",isCartSys=id=>id==="sw"||id==="sw2"||id==="n3ds";
+// (beta.11) the retro consoles' cartridges (and DOS's floppy disks, renderer/systems-extra.js) too: they were all called "Disc"
+const sysMedia=id=>((window.BS_SYSTEMS_EXTRA&&BS_SYSTEMS_EXTRA.media)||{})[id]||{},isFloppySys=id=>sysMedia(id).form==="floppy";
+const MEDIA_WORD=id=>isFloppySys(id)?"Floppy disk":isCartSys(id)?"Cartridge":id==="psp"?"UMD":"Disc",isCartSys=id=>id==="sw"||id==="sw2"||id==="n3ds"||sysMedia(id).kind==="cart";
 const partWord=(base)=>new Proxy(base,{get:(t,k)=>k==="disc"?MEDIA_WORD(studio&&studio.sys):t[k]});
 const PARTS=["front","back","spine","disc"],PART_N=partWord({front:"Front",back:"Back",spine:"Spine",disc:"Disc"}),PART_L=partWord({front:"Front cover",back:"Back cover",spine:"Spine",disc:"Disc"});
 const REGS=[["usa","USA"],["eur","Europe"],["jpn","Japan"]],REG_S={usa:"USA",eur:"EUR",jpn:"JPN",world:"World"};
@@ -1258,8 +1283,8 @@ const SRC_N={made:"Boxshelf, from the cover",launchbox:"LaunchBox",libretro:"lib
 const FILTERS=[["all","All"],["nocover","No cover"],["missing","Missing a part"],["low","Low-res"],["locked","Your picks"]];
 // (1.80) a part as a little picture of itself (cover, back, spine, disc or cartridge) with a mark for its state, so the grid
 // reads without letters or colour alone: ✓ have it · ! low-res · × missing · • your pick
-const PICON={front:'<rect x="3.5" y="1.5" width="9" height="13" rx="1.3"/>',back:'<rect x="3.5" y="1.5" width="9" height="13" rx="1.3"/><path d="M5.6 5h4.8M5.6 8h4.8M5.6 11h3"/>',spine:'<rect x="6" y="1.5" width="4" height="13" rx="1"/>',disc:'<circle cx="8" cy="8" r="6.4"/><circle cx="8" cy="8" r="1.5"/>',cart:'<rect x="2.5" y="3" width="11" height="10" rx="1.2"/><path d="M5 6h6v3.5H5z"/>'};
-const partIcon=(p,sys)=>`<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round">${PICON[p==="disc"&&isCartSys(sys)?"cart":p]}</svg>`;
+const PICON={front:'<rect x="3.5" y="1.5" width="9" height="13" rx="1.3"/>',back:'<rect x="3.5" y="1.5" width="9" height="13" rx="1.3"/><path d="M5.6 5h4.8M5.6 8h4.8M5.6 11h3"/>',spine:'<rect x="6" y="1.5" width="4" height="13" rx="1"/>',disc:'<circle cx="8" cy="8" r="6.4"/><circle cx="8" cy="8" r="1.5"/>',cart:'<rect x="2.5" y="3" width="11" height="10" rx="1.2"/><path d="M5 6h6v3.5H5z"/>',floppy:'<path d="M2.5 2.5h9.5l1.5 1.5v9.5h-11z"/><path d="M5 2.5v3.5h5V2.5M4.5 13.5V9h7v4.5"/>'};
+const partIcon=(p,sys)=>`<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round">${PICON[p==="disc"&&isFloppySys(sys)?"floppy":p==="disc"&&isCartSys(sys)?"cart":p]}</svg>`;
 const SL_MARK={"":"✓",lo:"!",miss:"×",lk:"•","miss lk":"×"},SL_WORD={"":"have it",lo:"low-res",miss:"missing",lk:"your pick","miss lk":"missing"};
 const LOCK_SVG='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>';
 function lookName(l,short){if(!l||l==="shelf")return "Shelf style";if(l==="authentic")return "Authentic";if(l==="hd")return short?"HD":"HD";if(l==="special")return short?"Special":"Special ed.";if(l==="exact")return short?"picked":"Exact pick";
@@ -1268,7 +1293,10 @@ function styleLook(st,part){st=st||{};if(st.preset==="sets")return st.setsHd?"hd
 function styleName(st){st=st||{};if(st.preset==="sets")return "Complete sets · "+(st.setsHd?"HD":REG_S[st.region||"usa"]||"USA");if(st.preset==="region")return "Region · "+(REG_S[st.region||"usa"]||"USA");if(st.preset==="mix")return "Your mix";return (PRESETS.find(p=>p[0]===st.preset)||PRESETS[0])[1]}
 const scoreKey=l=>l==="hd"?"hd":String(l||"").startsWith("region")?"region":l==="special"?"special":"authentic";
 const ck=(sys,file,part)=>sys+"|"+String(file||"").toLowerCase()+"|"+part;
-let sViewK="",studio=null,stack=[],sRet=0,sInfo=null,sInfoBusy=false,sGames={},sCands={},sJobs={},jobSys={},sBusy={},sEls={},sGeo=null,sSig="",styleT=0;
+/* sDirect (beta.11): opened straight onto one game's box art or manuals (the Box art / Choose manual… buttons): B on
+   that page closes Settings, back to the shelf, instead of stepping up through its console's games and the Art page.
+   It holds that page itself: deeper pages come back to the same one, and a page reached another way never matches */
+let sDirect=0,sViewK="",studio=null,stack=[],sRet=0,sInfo=null,sInfoBusy=false,sGames={},sCands={},sJobs={},jobSys={},sBusy={},sEls={},sGeo=null,sSig="",styleT=0;
 const conOf=sys=>sInfo&&sInfo.consoles.find(c=>c.id===sys)||null;
 const conName2=sys=>(conOf(sys)||{}).name||conName(sys);
 const gameOf=(sys,file)=>{const e=sGames[sys];if(!e||!e.list)return null;const f=String(file||"").toLowerCase();return e.list.find(g=>String(g.file).toLowerCase()===f)||null};
@@ -1397,7 +1425,7 @@ function studioRows(){if(!api.artStudio)return [];
 /* opening, going back */
 function studioOpen(v,reset){if(edit)cancelEdit();grab=null;artAcct=null;if(!studio||reset){if(!studio)sRet=rowI;stack=[]}else stack.push(studio);
   studio=Object.assign({i:0,y:0},v);focus="page";infoOpen=false;sSig="";play("open");studioLoad();render()}
-function studioBack(){play("back");const was=studio;if(stack.length){studio=stack.pop();
+function studioBack(){if(sDirect&&studio===sDirect){sDirect=0;close();return}play("back");const was=studio;if(stack.length){studio=stack.pop();
     if(studio.v==="mgames"&&was.file){const k=mgList(studio).findIndex(g=>String(g.file).toLowerCase()===String(was.file).toLowerCase());if(k>=0){studio.i=k;studio.zone="grid";studio.reveal=true}}
     if(studio.v==="games"&&was.file){const L=gamesList(studio),k=L.findIndex(g=>String(g.file).toLowerCase()===String(was.file).toLowerCase());if(k>=0){studio.i=k;studio.zone="grid";studio.reveal=true}}
     sSig="";studioLoad();render();return}
@@ -1577,6 +1605,9 @@ function caseShape(P,sys){const c=P.f&&P.f.parentNode;if(!c)return;const im=P.f.
 // (beta.9) the case is far bigger than a card: it shows the card's 360 px picture at once (already decoded), then a sharper copy
 // (made by main off its thread, kept in data\thumbs) once that one has decoded: no blank, no flicker. Windows only
 const CASE_T=Math.max(900,Math.min(1600,Math.round((window.devicePixelRatio||1)*640/100)*100));
+/* (beta.11) the art in use as its 360 px picture (Windows' bsfile only): the case opens with the very picture its card
+   uses, so nothing is swapped (blank, then faded in) when the versions arrive, and caseSharp sharpens it from there */
+const t360=u=>u&&/^bsfile:/.test(u)&&!/[?&]t=\d/.test(u)?u+(u.includes("?")?"&":"?")+"t=360":u;
 function caseSharp(el){if(!el||(window.bsPlatform&&bsPlatform.os==="android"))return;const im=el.querySelector(":scope > img"),u=el._u;
   if(!im||im._sh||!u||!/[?&]t=360\b/.test(u))return;im._sh=1;const big=String(u).replace(/([?&])t=360\b/,"$1t="+CASE_T),pre=new Image();pre.decoding="async";pre.src=big;
   // (swapped only once the small one has settled: changing src while its own decode is pending would fail that decode,
@@ -1787,14 +1818,14 @@ function pickPreview(){const st=studio;if(!st||st.v!=="pick"||!sEls.P)return;
   if(st.view==="sets"){const g=gameOf(st.sys,st.file),S=sSets[ck(st.sys,st.file,"sets")],x=S&&S.list?pkList(st,null)[st.i]:null,art=Object.assign({},g&&g.art||{});
     if(x&&x.set)for(const p of PARTS){const c=x.parts[p];if(c&&c.thumb)art[p]=c.thumb}
     casePaint(sEls.P,art,{turned:st.turned,k:"On your shelf",what:x?(x.act?ACT_L[x.act]:x.label.replace(/ · complete$/,"")):"",why:x&&x.set?`Front, back, spine and disc together${x.same?", back and spine from one full scan":""}. A puts all four in as your picks.`:x&&x.act?ACT_S[x.act]+".":""});nbPaint(st,null);return}const g=gameOf(st.sys,st.file),c=sCands[ck(st.sys,st.file,st.part)],L=pkList(st,c),x0=L[st.i],x=x0&&!x0.act?x0:null;
-  const art=Object.assign({},g&&g.art||{});if(x&&x.thumb)art[st.part]=x.thumb;const lk=lockOf(g,st.part);
+  const art=Object.assign({},g&&g.art||{});if(art[st.part])art[st.part]=t360(art[st.part]);if(x&&x.thumb&&!x.inUse)art[st.part]=x.thumb;const lk=lockOf(g,st.part);
   if(st.part!=="disc")delete art.disc; // (1.80) the disc stays out of the way of the cover, unless it's the part being chosen
   let why="";if(x){const sz=x.w&&x.h?`${x.w} × ${x.h} `:"",kind=x.kind==="hd"?"HQ picture":x.kind==="clean"?"clean picture":"scan";why=`${sz}${kind} from ${SRC_N[x.source]||x.source}.`;
     why+=x.inUse?(lk&&lk.look==="exact"&&lk.key===x.key?" In use · your pick: auto-fetch leaves it, a shelf style change replaces it unless the game is locked.":" In use now.") :st.i===0&&L.length>1?` Best match for ${lookName(c.look)}.`:"";if(x.edition==="reprint")why+=" Has a reprint banner.";}
   if(x0&&x0.act){why=ACT_S[x0.act]+".";}
   // (1.80) trying another version: the case wears it ("Trying"), and the picture on your shelf now shows small beside it
   const trying=!!(x&&x.thumb&&!x.inUse&&st.zone!=="parts"),cur=g&&g.art&&g.art[st.part];
-  if(sEls.now){sEls.now.classList.toggle("on",trying&&!!cur);if(trying&&cur)slot(sEls.now.querySelector(".im"),cur,"")}
+  if(sEls.now){sEls.now.classList.toggle("on",trying&&!!cur);if(trying&&cur)slot(sEls.now.querySelector(".im"),t360(cur),"")}
   casePaint(sEls.P,art,{discBig:st.part==="disc",still:!!st.still,spineBig:st.part==="spine"&&!st.turned,turned:st.part==="back"?!st.turned:st.turned,k:trying?`Trying · ${btnLabel("a")} uses it`:"On your shelf",what:x?x.label||"":x0&&x0.act?ACT_L[x0.act]:"",why});nbPaint(st,x)}
 // a whole set: all four downloaded and put in by main (nothing changes if one can't be had), each part your pick; Undo set
 // (an action card after the sets) puts all four back
@@ -2084,8 +2115,8 @@ function openManualFromArt(){const st=studio;if(!st||!api.manualStudio)return;st
 function renderStudio(){if(MV[studio.v]){msRender(studio);return}const st=studio,nm=conName2(st.sys),g=st.file?gameOf(st.sys,st.file):null,full=g?g.title:st.title||"",title=truncEnd(full,40);
   const H0={games:[`Box art & manuals  ›  ${nm}`,`${nm} art`,()=>{const e=sGames[st.sys],c=conOf(st.sys),n=e&&e.list?e.list.length:c?c.total:0,lk=e&&e.list?e.list.filter(isLocked).length:c?c.locked:0;const jt=conJobText(st.sys);const nc=e&&e.list?e.list.filter(x=>!(x.art&&x.art.front)).length:0;return `${n} game${n===1?"":"s"}${nc?` · ${nc} without a cover`:""}${lk?` · ${lk} with picks or locked`:""}${jt?" · "+jt:""}`}], /* (1.80: the shelf style is on its pill, not repeated here) */
     style:[`Box art & manuals  ›  ${nm}  ›  Shelf style`,`How should ${nm} look?`,()=>"Pick one. It changes every game except locked ones, your picks too (Lock this game keeps a game as it is). Replaced pictures go to the replaced folder; Undo brings them back."],
-    pick:[`Box art & manuals  ›  ${nm}  ›  ${title}`,full,()=>{const c=sCands[ck(st.sys,st.file,st.part)],n=c&&c.list?c.list.filter(x=>!x.failed).length:null,pl=PART_L[st.part].toLowerCase();
-      return isFrozen(g)?"This game is locked as it is: nothing automatic changes it. Your own changes here still work.":n==null?`Looking for every version of the ${pl}…`:`Each part follows the shelf style until you pick one. ${n} version${n===1?"":"s"} of the ${pl} found.`}]}[st.v];
+    /* (beta.11) under a game's title only the locked notice: the parts and their cards say the rest */
+    pick:[`Box art & manuals  ›  ${nm}  ›  ${title}`,full,()=>isFrozen(g)?"This game is locked as it is: nothing automatic changes it. Your own changes here still work.":""]}[st.v];
   if(E.crumb.textContent!==H0[0])E.crumb.textContent=H0[0];if(E.title.textContent!==H0[1])E.title.textContent=H0[1];const ld=H0[2]();if(E.lead.textContent!==ld)E.lead.textContent=ld;
   // a view is built when it opens (or its shape changes: a filter, the list arriving); the fade-in plays only when you
   // arrive at another view or game, never when the same view is rebuilt under you. Pick keeps its frame across parts
@@ -2191,7 +2222,7 @@ function renderSide(){
     if(badge){b.className="badge";b.textContent=badge}else if(dot){b.className="dot"+(dot==="warn"?" warn":"");b.textContent=""}else{b.className="badge";b.textContent=""}})
   // keep the current section in view: a layout read, so only when the section (or the studio's console list) changed
   const sk=secI+"|"+!!studio+"|"+(results?1:0);if(E.side._sk===sk)return;E.side._sk=sk;
-  const on=sideNavs[secI];if(on&&E.side.scrollHeight>E.side.clientHeight+2){const t=on.offsetTop,h=on.offsetHeight,st=E.side.scrollTop,H=E.side.clientHeight;if(t-60<st)E.side.scrollTop=Math.max(0,t-60);else if(t+h+60>st+H)E.side.scrollTop=t+h+60-H}}
+  const on=sideNavs[secI];if(on&&E.side.scrollHeight>E.side.clientHeight+2){const t=on.offsetTop,h=on.offsetHeight,st=E.side.scrollTop,H=E.side.clientHeight;if(t-60<st)E.side.scrollTop=t-60<(sideNavs[0]?sideNavs[0].offsetTop:0)+10?0:t-60; /* (beta.11) the top sections scroll right up, search box included (it was left half off the top) */else if(t+h+60>st+H)E.side.scrollTop=t+h+60-H}}
 // the value side of a row: readable text and a chevron, a sliding choice, a springy switch, a slider
 const truncMid=(s,n)=>{s=String(s||"");if(s.length<=n)return s;const k=Math.ceil((n-1)*.42);return s.slice(0,k)+"…"+s.slice(s.length-(n-1-k))};
 const truncEnd=(s,n)=>{s=String(s||"");return s.length<=n?s:s.slice(0,n-1)+"…"};
@@ -2463,6 +2494,7 @@ function poll(t){rafId=0;if(!active)return;rafId=requestAnimationFrame(poll);
   // another window in front (an emulator opened from here, a file dialog): its controller presses aren't for Settings; back
   // in front, whatever is still held from there doesn't act either
   if(!document.hasFocus()){primed=false;return}
+  if(window.BS_TOUR&&BS_TOUR.on()){primed=false;return} /* (beta.11) the shelf tour has the controller while it shows a Settings page */
   let gpd=null;try{if(window.BS_activePad)gpd=window.BS_activePad();else for(const g of navigator.getGamepads?navigator.getGamepads():[])if(g&&g.connected){gpd=g;break}}catch{} /* the pad last used, as on the shelf */
   if(!gpd){primed=true;return}
   if(window.Shelf&&Shelf.padBlocked&&Shelf.padBlocked()){for(const k in held)held[k]=Infinity;for(const b of [0,1,2,3,4,5,6,7,8,9,12,13,14,15])if(gpd.buttons[b]&&gpd.buttons[b].pressed)held[b===0?"p0":b===1?"p1":b===6?"lt":b===7?"rt":BTN[b]]=Infinity;held.up=held.down=held.left=held.right=Infinity;return}

@@ -5,6 +5,8 @@
 // as the game's window is fullscreen), hiding its window until then (0 = off).
 // Dolphin: -b closes Dolphin when the game stops, -C overrides a setting for this launch only.
 
+// (beta.11) VisualBoyAdvance-M, for the Game Boy shelves (before CONSOLES: the retro rows below use it)
+const VBA = ['visualboyadvance-m.exe', 're:^visualboyadvance[^\\\\]*\\.exe$'], VBA_DIRS = ['{app}\\VisualBoyAdvance-M', '{app}\\visualboyadvance-m', '%ProgramFiles%\\VisualBoyAdvance-M'];
 const CONSOLES = [
   {
     id: 'gc', name: 'GameCube', emulatorName: 'Dolphin',
@@ -150,16 +152,18 @@ const CONSOLES = [
   // -fullscreen -batch -nogui -- ; mGBA -f ; melonDS -f ; RMG --fullscreen --quit-after-emulation --nogui ; BlastEm -f
   // (toggles fullscreen). Their cases and media are in renderer/systems-extra.js.
   ...retro([
-    ['psx', 'PlayStation', 'DuckStation', ['duckstation-qt-x64-ReleaseLTCG.exe', 'duckstation-qt-x64-ReleaseLTCG-SSE2.exe', 'duckstation-qt.exe'], ['{app}\\DuckStation', '{app}\\duckstation', '%LOCALAPPDATA%\\Programs\\DuckStation', '%ProgramFiles%\\DuckStation'],
+    // (beta.11) DuckStation's program has had several names (…-Release.exe, …-ReleaseLTCG.exe, ARM64 builds): any
+    // duckstation*.exe is found; DeSmuME (DS) and VisualBoyAdvance-M (GB, GBC, GBA) are found too (main.js ALT_ARGS)
+    ['psx', 'PlayStation', 'DuckStation', ['duckstation-qt-x64-ReleaseLTCG.exe', 'duckstation-qt-x64-ReleaseLTCG-SSE2.exe', 'duckstation-qt.exe', 're:^duckstation[^\\\\]*\\.exe$'], ['{app}\\DuckStation', '{app}\\duckstation', '{app}\\duckstation-windows-x64-release', '%LOCALAPPDATA%\\Programs\\DuckStation', '%ProgramFiles%\\DuckStation'],
       ['psx', 'ps1', 'playstation', 'playstation 1'], ['cue', 'chd', 'm3u', 'pbp', 'iso', 'ecm', 'mds', 'img', 'ccd'], '-fullscreen -batch -nogui -- "{rom}"', 'swanstation', true],
     ['nes', 'NES', 'RetroArch', [], [], ['nes', 'famicom', 'nintendo entertainment system'], ['nes', 'fds', 'unf', 'unif', 'zip', '7z'], '', 'mesen'],
     ['snes', 'SNES', 'RetroArch', [], [], ['snes', 'sfc', 'super nintendo', 'super famicom'], ['sfc', 'smc', 'fig', 'swc', 'bs', 'zip', '7z'], '', 'snes9x'],
     ['n64', 'Nintendo 64', 'RetroArch', ['RMG.exe'], ['{app}\\RMG', '{app}\\Rosalie\'s Mupen GUI', '%LOCALAPPDATA%\\Programs\\RMG'],
       ['n64', 'nintendo 64'], ['z64', 'n64', 'v64', 'zip', '7z'], '--fullscreen --quit-after-emulation --nogui "{rom}"', 'mupen64plus_next'],
-    ['gb', 'Game Boy', 'RetroArch', [], [], ['gb', 'gameboy', 'game boy'], ['gb', 'zip', '7z'], '', 'gambatte'],
-    ['gbc', 'Game Boy Color', 'RetroArch', [], [], ['gbc', 'gameboy color', 'game boy color'], ['gbc', 'zip', '7z'], '', 'gambatte'],
-    ['gba', 'Game Boy Advance', 'RetroArch', ['mGBA.exe'], ['{app}\\mGBA', '%ProgramFiles%\\mGBA'], ['gba', 'gameboy advance', 'game boy advance'], ['gba', 'zip', '7z'], '-f "{rom}"', 'mgba'],
-    ['nds', 'DS', 'melonDS', ['melonDS.exe'], ['{app}\\melonDS', '%ProgramFiles%\\melonDS'], ['nds', 'ds', 'nintendo ds'], ['nds', 'dsi', 'zip', '7z'], '-f "{rom}"', 'melondsds', true],
+    ['gb', 'Game Boy', 'RetroArch', ['mGBA.exe', ...VBA], ['{app}\\mGBA', ...VBA_DIRS], ['gb', 'gameboy', 'game boy'], ['gb', 'zip', '7z'], '', 'gambatte'],
+    ['gbc', 'Game Boy Color', 'RetroArch', ['mGBA.exe', ...VBA], ['{app}\\mGBA', ...VBA_DIRS], ['gbc', 'gameboy color', 'game boy color'], ['gbc', 'zip', '7z'], '', 'gambatte'],
+    ['gba', 'Game Boy Advance', 'RetroArch', ['mGBA.exe', ...VBA], ['{app}\\mGBA', '%ProgramFiles%\\mGBA', ...VBA_DIRS], ['gba', 'gameboy advance', 'game boy advance'], ['gba', 'zip', '7z'], '-f "{rom}"', 'mgba'],
+    ['nds', 'DS', 'melonDS', ['melonDS.exe', 're:^desmume[^\\\\]*\\.exe$'], ['{app}\\melonDS', '%ProgramFiles%\\melonDS', '{app}\\DeSmuME', '%ProgramFiles%\\DeSmuME'], ['nds', 'ds', 'nintendo ds'], ['nds', 'dsi', 'zip', '7z'], '-f "{rom}"', 'melondsds', true],
     ['megadrive', 'Mega Drive', 'RetroArch', ['blastem.exe'], ['{app}\\BlastEm', '{app}\\blastem'], ['megadrive', 'genesis', 'mega drive', 'md'], ['md', 'gen', 'smd', 'bin', 'zip', '7z'], '-f "{rom}"', 'genesis_plus_gx'],
     ['mastersystem', 'Master System', 'RetroArch', [], [], ['mastersystem', 'master system', 'sms'], ['sms', 'zip', '7z'], '', 'genesis_plus_gx'],
     ['gamegear', 'Game Gear', 'RetroArch', [], [], ['gamegear', 'game gear', 'gg'], ['gg', 'zip', '7z'], '', 'genesis_plus_gx'],
@@ -243,8 +247,9 @@ const LINUX_EMU = {
   n3ds: ['azahar', 'org.azahar_emu.Azahar', 're:^azahar.*\\.appimage$', 'lime3ds', 'citra-qt'],
   psx: ['duckstation-qt', 'org.duckstation.DuckStation', 're:^duckstation.*\\.appimage$'],
   n64: ['RMG', 'com.github.Rosalie241.RMG', 're:^rmg.*\\.appimage$'],
-  gba: ['mgba-qt', 'mgba', 'io.mgba.mGBA', 're:^mgba.*\\.appimage$'],
-  nds: ['melonDS', 'net.kuribo64.melonDS', 're:^melonds.*\\.appimage$'],
+  gba: ['mgba-qt', 'mgba', 'io.mgba.mGBA', 're:^mgba.*\\.appimage$', 'visualboyadvance-m', 'com.vba_m.visualboyadvance-m', 're:^visualboyadvance.*\\.appimage$'],
+  gb: ['mgba-qt', 'mgba', 'io.mgba.mGBA', 'visualboyadvance-m', 'com.vba_m.visualboyadvance-m'], gbc: ['mgba-qt', 'mgba', 'io.mgba.mGBA', 'visualboyadvance-m', 'com.vba_m.visualboyadvance-m'], // (beta.11)
+  nds: ['melonDS', 'net.kuribo64.melonDS', 're:^melonds.*\\.appimage$', 'desmume', 'org.desmume.DeSmuME'], // (beta.11: DeSmuME too)
   megadrive: ['blastem'],
   dreamcast: ['flycast', 'org.flycast.Flycast', 're:^flycast.*\\.appimage$'],
 };

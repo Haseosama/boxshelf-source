@@ -54,7 +54,26 @@ module.exports = async function setupPass({ browser, base, check, OUT }) {
     // first run: RetroArch installed, a few retro consoles with games, many without
     await page.goto(base + '?platform=windows&retro=1&wave2=1');
     await page.waitForSelector('#setup.on', { timeout: 90000 }); await pause(800);
+    // (beta.11) the Windows first run in Settings' look: full screen, a sidebar with an icon and a status per step (the step's
+    // text stays its name), the choices as rows with an info card that follows the focus, Settings' hint pill
+    const look = await page.evaluate(async () => { const w = ms => new Promise(r => setTimeout(r, ms)), q = s => document.querySelector(s), c = q('#setup .su-card').getBoundingClientRect();
+      const steps = [...document.querySelectorAll('#suNav .su-step')], rows = [...document.querySelectorAll('#suBody .wz-row')], o = {};
+      o.full = q('#setup').classList.contains('wz-win') && Math.abs(c.width - innerWidth) < 2 && Math.abs(c.height - innerHeight) < 2;
+      o.icons = steps.filter(s => s.querySelector('svg')).length; o.labels = steps.map(s => s.textContent.trim()).join('|');
+      o.acct = (steps.find(s => /Accounts/.test(s.textContent)) || { dataset: {} }).dataset.st || '';
+      o.rows = rows.length; o.parts = rows.every(r => r.querySelector('.wz-ic svg') && r.querySelector('.wz-t') && r.querySelector('small') && r.querySelector('.wz-chev'));
+      o.info1 = (q('#suBody .wz-info h4') || {}).textContent || ''; if (rows[1]) rows[1].focus(); await w(50); o.info2 = (q('#suBody .wz-info h4') || {}).textContent || '';
+      const pad = q('#suFoot .wz-hints .wz-pad'); o.hints = !!pad && getComputedStyle(pad).display === 'none'; document.body.classList.add('pad-input'); o.padHints = !!pad && getComputedStyle(pad).display !== 'none'; document.body.classList.remove('pad-input');
+      if (document.activeElement) document.activeElement.blur(); return o; });
+    check('First run (beta.11): full screen in Settings\' look: icon + status sidebar (names unchanged), the choices as rows (icon, title, line, chevron), an info card that follows the focus, the hint pill (pad buttons with a controller)',
+      look.full && look.icons === 6 && look.labels === 'Welcome|Your consoles|Finish setting up|Box art|Accounts|Done' && look.acct === 'Optional' && look.rows === 2 && look.parts &&
+      /looks for/.test(look.info1) && /yourself/.test(look.info2) && look.hints && look.padHints, JSON.stringify(look));
     await page.getByRole('button', { name: 'Find my emulators and games' }).click(); await pause(1800);
+    const tiles = await page.evaluate(() => { const t = document.querySelector('.wz2-grid .wz2-card'); return { emu: !!(t && t.querySelector('.wz2-emu')), dot: !!(t && t.querySelector('.wz-dot')),
+      st: ([...document.querySelectorAll('#suNav .su-step')].find(s => /Your consoles/.test(s.textContent)) || { dataset: {} }).dataset.st || '', welcome: (document.querySelector('#suNav .su-step') || { dataset: {} }).dataset.st || '',
+      info: (document.querySelector('#suBody .wz-info h4') || {}).textContent || '' }; });
+    check('First run (beta.11): Your consoles shows Settings\' console tiles (name, emulator, a dot and its state) with the info card; the sidebar says Welcome is done and how many are ready',
+      tiles.emu && tiles.dot && /\d+ (ready|picked)/.test(tiles.st) && tiles.welcome === 'Done' && !!tiles.info, JSON.stringify(tiles));
     const p = await page.evaluate(() => {
       const big = [...document.querySelectorAll('.wz2-grid .wz2-card')].map(c => c.dataset.pick);
       return { big, ticked: big.filter(id => document.querySelector(`[data-pick="${id}"]`).getAttribute('aria-checked') === 'true').length, more: (document.querySelector('.con-more') || {}).textContent || '' };

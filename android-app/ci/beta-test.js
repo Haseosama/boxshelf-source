@@ -92,23 +92,129 @@ module.exports = async function betaPass({ browser, base, check, newPage, OUT })
       const row = n => [...document.querySelectorAll('#bss .bss-row')].find(r => ((r.querySelector('.nm') || {}).textContent || '') === n);
       const click = async (n, ms = 500) => { const r = row(n); if (r) r.click(); await w(ms); return !!r; };
       const sw2 = async () => (await window.boxshelf.getConfig()).config.systems.sw2;
-      Setup.open({ page: 'sw2' }); for (let i = 0; i < 40 && !row('Builds'); i++) await w(150); await w(800);
-      for (let i = 0; i < 20; i++) { out.consoleRow = (rowsNow().find(r => r.nm === 'Builds') || {}).t || ''; if (/builds found/.test(out.consoleRow)) break; await w(200); }
-      await click('Builds', 900); out.page = rowsNow().map(r => r.nm);
+      const EM = 'Emulators (forks)'; // (beta.11, was "Builds")
+      Setup.open({ page: 'sw2' }); for (let i = 0; i < 40 && !row(EM); i++) await w(150); await w(800);
+      for (let i = 0; i < 20; i++) { out.consoleRow = (rowsNow().find(r => r.nm === EM) || {}).t || ''; if (/\d+ emulators? ·/.test(out.consoleRow)) break; await w(200); }
+      await click(EM, 900); out.page = rowsNow().map(r => r.nm); out.head = [...document.querySelectorAll('#bss .bss-head, #bss [class*="head"]')].map(h => h.textContent).join(' | ');
       await click('Orchid v0.7.0', 900); let c = await sw2(); out.fixed = { ask: c.askBuild, emu: c.emulator, row: (rowsNow().find(r => r.nm === 'Orchid v0.7.0') || {}).t };
+      // (beta.11) Remove (pressed twice) on a found emulator hides it, and Play asks again when it was the one always used
+      out.rows = rowsNow().length; await click('Remove an emulator', 400); out.rmBtn = (rowsNow().find(r => r.nm === 'Orchid v0.7.0') || {}).t;
+      await click('Orchid v0.7.0', 200); await click('Orchid v0.7.0', 1500); c = await sw2();
+      out.hid = { hidden: c.buildHidden, ask: c.askBuild, names: rowsNow().map(r => r.nm), play: ((await window.boxshelf.sw2Builds('')).builds || []).map(b => b.label) };
+      const sh = rowsNow().find(r => /^Show removed emulators/.test(r.nm)); if (sh) await click(sh.nm, 1500); c = await sw2();
+      out.shown = { hidden: c.buildHidden, names: rowsNow().map(r => r.nm) }; await click('Remove an emulator', 400); out.doneBtn = (rowsNow().find(r => r.nm === 'Orchid v0.7.0') || {}).t;
       await click('Ask each time', 900); c = await sw2(); out.ask = c.askBuild;
-      await click('Add a folder of builds', 1500); c = await sw2(); out.added = { dirs: c.buildDirs, names: rowsNow().map(r => r.nm) };
+      await click('Add a folder of emulators', 1500); c = await sw2(); out.added = { dirs: c.buildDirs, names: rowsNow().map(r => r.nm) };
       const f = rowsNow().find(r => /^Folder · /.test(r.nm)); if (f) { await click(f.nm, 200); await click(f.nm, 1500); }
       c = await sw2(); out.removed = { dirs: c.buildDirs, names: rowsNow().map(r => r.nm) };
       if (window.Settings && Settings.isOpen && Settings.isOpen()) { await Settings.close(); await w(800); } return out; });
-    check('Beta (Windows): Settings → Switch 2 has a Builds page listing every build (the list Play shows) with Ask each time and ways to add more',
-      /Builds/.test(b.consoleRow) && /3 builds found/.test(b.consoleRow) && /Ask each time/.test(b.consoleRow)
-        && ['Ask each time', 'Selvet · Performance 6', 'Lichii pgo', 'Orchid v0.7.0', 'Add a folder of builds', 'Add a build'].every(n => b.page.includes(n)), JSON.stringify(b).slice(0, 500));
-    check('Beta (Windows): choosing a build always starts in it; Ask each time goes back to the list at Play',
+    check('Beta (Windows): Settings → Switch 2 → Emulators (forks) lists every emulator (the list Play shows) with Ask each time, + Add an emulator and a Remove for each',
+      /3 emulators ·/.test(b.consoleRow) && /Ask each time/.test(b.consoleRow)
+        && ['Ask each time', '+ Add an emulator', 'Selvet · Performance 6', 'Lichii pgo', 'Orchid v0.7.0', 'Remove an emulator', 'Add a folder of emulators'].every(n => b.page.includes(n))
+        && !b.page.some(n => /^Remove (Orchid|Lichii|Selvet)/.test(n)) /* one row per emulator: the page stays short */
+        && b.page.indexOf('+ Add an emulator') < b.page.indexOf('Selvet · Performance 6'), JSON.stringify(b).slice(0, 600));
+    check('Beta (Windows): choosing an emulator always starts in it; Ask each time goes back to the list at Play',
       b.fixed.ask === false && /orchid\.exe$/i.test(b.fixed.emu || '') && /✓ Always/.test(b.fixed.row || '') && b.ask === true, JSON.stringify({ fixed: b.fixed, ask: b.ask }));
-    check('Beta (Windows): a folder of builds kept elsewhere adds its builds, and Remove (pressed twice) takes it off the list',
+    check('Beta (Windows): Remove an emulator turns the rows\' buttons to Remove; pressed twice it takes a found emulator off both lists, Play asks again, and Show removed brings it back',
+      /Remove/.test(b.rmBtn || '') && /Always use|✓ Always/.test(b.doneBtn || '') && (b.hid.hidden || []).length === 1 && /orchid/i.test(b.hid.hidden[0]) && b.hid.ask === true && !b.hid.names.includes('Orchid v0.7.0') && !b.hid.play.includes('Orchid v0.7.0') && b.hid.play.length === 2
+        && b.hid.names.some(n => /^Show removed emulators \(1\)/.test(n)) && (b.shown.hidden || []).length === 0 && b.shown.names.includes('Orchid v0.7.0'), JSON.stringify({ hid: b.hid, shown: b.shown }).slice(0, 600));
+    check('Beta (Windows): a folder of emulators kept elsewhere adds its emulators, and Remove (pressed twice) takes it off the list',
       (b.added.dirs || []).length === 1 && b.added.names.includes('Fork 1') && b.added.names.some(n => /^Folder · /.test(n))
         && (b.removed.dirs || []).length === 0 && !b.removed.names.includes('Fork 1'), JSON.stringify({ added: b.added, removed: b.removed }).slice(0, 500));
+    // (beta.11) the list Play shows ends with "+ Add another emulator…": it picks a program, and the list comes back with it
+    const bpk = await w3.page.evaluate(async () => { const w = ms => new Promise(r => setTimeout(r, ms)), out = {};
+      const names = () => [...document.querySelectorAll('.buildpick .bp-row b')].map(b => b.textContent);
+      const p = Shelf._pickBuild({ id: 'sw2:test', title: 'Test game', file: 'C:\\Games\\test.nsp', kind: 'rom' });
+      for (let i = 0; i < 30 && !names().length; i++) await w(100); out.first = names();
+      const add = [...document.querySelectorAll('.buildpick .bp-row')].find(r => r.classList.contains('bp-add')); if (add) add.click();
+      for (let i = 0; i < 40 && !names().some(n => /program\.exe/.test(n)); i++) await w(100); await w(300); out.again = names();
+      out.saved = ((await window.boxshelf.getConfig()).config.systems.sw2 || {}).buildExes || [];
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); out.result = await Promise.race([p, w(3000).then(() => 'timeout')]); await w(400);
+      out.closed = !document.querySelector('.buildpick.on'); return out; });
+    check('Beta (Windows): Play\'s build list ends with "+ Add another emulator…", which adds the program and shows the list again with it',
+      bpk.first[bpk.first.length - 1] === '+ Add another emulator…' && bpk.first.length === 4 && bpk.again.some(n => /program\.exe/.test(n)) && bpk.again[bpk.again.length - 1] === '+ Add another emulator…'
+        && bpk.saved.some(x => /program\.exe$/i.test(x)) && bpk.result === null && bpk.closed, JSON.stringify(bpk).slice(0, 600));
+    // (beta.11) Settings → Shelf → Surprise me: Off takes the Surprise me case off every shelf; From every shelf brings it back
+    const sm = await w3.page.evaluate(async () => { const w = ms => new Promise(r => setTimeout(r, ms)), api = window.boxshelf;
+      const rnd = () => Shelf._lib.shelves().filter(s => s.random).length;
+      const set = async v => { const c = (await api.getConfig()).config; if (v === 'off') c.ui.surpriseMe = 'off'; else delete c.ui.surpriseMe; await api.saveConfig(c); await Shelf.refresh(true); await w(400); };
+      const before = rnd(); await set('off'); const off = rnd(); await set('on'); return { before, off, back: rnd() }; });
+    check('Beta (Windows): Surprise me can be turned off (no Surprise me case on any shelf) and back on', sm.before > 0 && sm.off === 0 && sm.back === sm.before, JSON.stringify(sm));
+    // (beta.11) a Switch Pro pad: changing Button prompts to Xbox pictures doesn't turn its A (right button) into Back, so
+    // the next A press stays on the page and the choice is saved (it used to swap at once and A left Settings)
+    const pp = await w3.page.evaluate(async () => { const w = ms => new Promise(r => setTimeout(r, ms)), out = {}, api = window.boxshelf;
+      const btn = () => ({ pressed: false, touched: false, value: 0 });
+      const pad = { id: 'Wireless Gamepad (STANDARD GAMEPAD Vendor: 057e Product: 2009)', index: 0, connected: true, mapping: 'standard', timestamp: 0, axes: [0, 0, 0, 0], buttons: Array.from({ length: 18 }, btn) };
+      Object.defineProperty(navigator, 'getGamepads', { configurable: true, value: () => [pad, null, null, null] }); window.dispatchEvent(Object.assign(new Event('gamepadconnected'), { gamepad: pad }));
+      const press = async (i) => { pad.buttons[i] = { pressed: true, touched: true, value: 1 }; pad.timestamp++; await w(250); pad.buttons[i] = btn(); pad.timestamp++; await w(450); };
+      const cur = () => ((document.querySelector('#bss .bss-row.cur .nm') || {}).textContent || '');
+      await press(12); Setup.open({ page: 'pad' }); for (let i = 0; i < 40 && !document.querySelector('#bss.on .bss-row'); i++) await w(150); await w(800);
+      for (let i = 0; i < 8 && cur() !== 'Button prompts'; i++) await press(13);
+      out.row = cur(); await press(15); out.saved = (await api.getConfig()).config.ui.buttons;
+      await press(1); out.after = cur(); out.open = !!(Settings.isOpen && Settings.isOpen());
+      const c = (await api.getConfig()).config; delete c.ui.buttons; await api.saveConfig(c);
+      if (Settings.isOpen && Settings.isOpen()) { await Settings.close(); await w(800); }
+      try { delete navigator.getGamepads; } catch (e) {} Shelf.setButtons && Shelf.setButtons('auto'); return out; });
+    check('Beta (Windows): on a Switch Pro pad, choosing Xbox button pictures saves at once and A (the right button) still confirms: Settings stays open on the row',
+      pp.row === 'Button prompts' && pp.saved && pp.saved !== 'auto' && pp.after === 'Button prompts' && pp.open, JSON.stringify(pp));
+    // (beta.11) the 3D case in Inspect has its printed spine (a stray comment once left it off every case)
+    const isp = await w3.page.evaluate(async () => { const w = ms => new Promise(r => setTimeout(r, ms)), out = {};
+      const key = k => document.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true }));
+      for (let i = 0; i < 20 && Shelf.getMode() !== 'browse'; i++) { key('Escape'); await w(400); }
+      for (let i = 0; i < 6 && !/^(gc|wii)\d/.test((Shelf._lib.cur() || {}).id || ''); i++) { key('ArrowRight'); await w(400); }
+      key('v'); for (let i = 0; i < 30 && !(window.Inspect3D && Inspect3D.isActive && Inspect3D.isActive()); i++) await w(200); await w(1200);
+      out.gl = !!(window.Inspect3D && Inspect3D.isActive && Inspect3D.isActive()); out.spine = out.gl ? Inspect3D._st().spine : null; out.mode = Shelf.getMode();
+      for (let i = 0; i < 4 && Shelf.getMode() !== 'browse'; i++) { key('Escape'); await w(700); } return out; });
+    check('Beta (Windows): the 3D case in Inspect has its printed spine', isp.mode === 'inspect' && (isp.gl ? isp.spine === true : true), JSON.stringify(isp));
+    // (beta.11) the magazine finder says how big each download is, flags a big one and asks once more before a very big one
+    const iaw = await w3.page.evaluate(async () => { const w = ms => new Promise(r => setTimeout(r, ms)), out = {};
+      Setup.open({ page: 'reading' }); for (let i = 0; i < 30 && !document.querySelector('#bss.on .bss-row'); i++) await w(150); await w(600);
+      const row = [...document.querySelectorAll('#bss .bss-row')].find(r => /Find on the Internet Archive/.test(r.textContent)); if (row) row.click();
+      for (let i = 0; i < 30 && !document.querySelector('.ia-input'); i++) await w(150);
+      const inp = document.querySelector('.ia-input'); if (inp) { inp.value = 'big issue'; inp.dispatchEvent(new Event('input', { bubbles: true })); inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); }
+      const card = () => document.querySelector('.ia-card'); for (let i = 0; i < 40 && !card(); i++) await w(200); await w(500);
+      out.text = card() ? card().innerText.replace(/\s+/g, ' ').slice(0, 160) : '';
+      const b1 = card() && [...card().querySelectorAll('button')].find(x => x.textContent === 'Download'); if (b1) b1.click(); await w(250);
+      out.armed = card() ? [...card().querySelectorAll('button')].map(x => x.textContent).join(' | ') : '';
+      const b2 = card() && [...card().querySelectorAll('button')].find(x => /^Yes, download/.test(x.textContent)); if (b2) b2.click(); await w(500);
+      out.started = card() ? [...card().querySelectorAll('button,.ia-state,.badge')].map(x => x.textContent).join(' | ') : '';
+      const c2 = document.querySelectorAll('.ia-card')[1]; out.small = c2 ? c2.innerText.replace(/\s+/g, ' ').slice(0, 120) : '';
+      if (Settings.isOpen && Settings.isOpen()) { await Settings.close(); await w(600); } return out; });
+    check('Beta (Windows): the magazine finder shows each download\'s size, flags a big one, and a very big one asks "Yes, download 753 MB" before it starts',
+      /753 MB/.test(iaw.text) && /Large download: 753 MB/.test(iaw.text) && /Yes, download 753 MB/.test(iaw.armed) && !/Yes, download/.test(iaw.started) && /Starting|Cancel|%/.test(iaw.started) && /40 MB/.test(iaw.small) && !/Large download/.test(iaw.small), JSON.stringify(iaw));
+    // (beta.11) the museum's Room menu: stepping down to its last row with the controller / keys scrolls it clear of the
+    // buttons docked at the bottom (the last rows used to sit under them)
+    const rm = await w3.page.evaluate(async () => { const w = ms => new Promise(r => setTimeout(r, ms)), out = {};
+      const key = k => document.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true }));
+      for (let i = 0; i < 10 && Shelf.getMode() !== 'browse'; i++) { key('Escape'); await w(400); }
+      key('m'); for (let i = 0; i < 60 && Shelf.getMode() !== 'museum'; i++) await w(250); await w(2500); key('Tab'); await w(800);
+      const el = document.getElementById('musRoom'); if (!el) return { none: true }; const n = el.querySelectorAll('.mr-row').length;
+      for (let i = 0; i < n - 1; i++) { key('ArrowDown'); await w(60); } await w(400);
+      const on = el.querySelector('.mr-row.on'), dock = el.querySelector('.mr-dock'); out.rows = n; out.last = on && on.textContent.slice(0, 40);
+      if (on && dock) { const a = on.getBoundingClientRect(), b = dock.getBoundingClientRect(), c = el.getBoundingClientRect(); out.clear = a.bottom <= b.top + 1 && a.top >= c.top - 1; }
+      key('Tab'); await w(400); for (let i = 0; i < 6 && Shelf.getMode() !== 'browse'; i++) { key('Escape'); await w(700); } return out; });
+    check('Beta (Windows): the museum\'s Room menu scrolls its last row clear of the buttons docked at its foot', rm.rows > 5 && rm.clear === true, JSON.stringify(rm));
+    // (beta.11) Details with a controller: the stick held down keeps stepping (it used to take one step per push), and
+    // the panel glides to each item (many in-between scroll positions, no jumps)
+    await w3.page.bringToFront(); // (Boxshelf ignores pads on a page without the focus, as with a game in front)
+    const dg = await w3.page.evaluate(async () => { const w = ms => new Promise(r => setTimeout(r, ms)), out = {};
+      const key = k => document.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true }));
+      for (let i = 0; i < 8 && Shelf.getMode() !== 'browse'; i++) { key('Escape'); await w(400); }
+      key('i'); for (let i = 0; i < 20 && Shelf.getMode() !== 'details'; i++) await w(150); await w(900);
+      const dm = document.getElementById('dMenu'); out.menuWasOpen = !!(dm && !dm.hidden); if (out.menuWasOpen) { key('Escape'); await w(500); }
+      out.mode = Shelf.getMode(); out.qm = !!document.querySelector('#app.qm-open'); out.focus = document.hasFocus();
+      const d = document.getElementById('details'); out.scrolls = d.scrollHeight - d.clientHeight;
+      const btn = () => ({ pressed: false, touched: false, value: 0 });
+      const pad = { id: 'Xbox Wireless Controller (STANDARD GAMEPAD Vendor: 045e Product: 0b13)', index: 0, connected: true, mapping: 'standard', timestamp: 0, axes: [0, 0, 0, 0], buttons: Array.from({ length: 17 }, btn) };
+      Object.defineProperty(navigator, 'getGamepads', { configurable: true, value: () => [pad, null, null, null] }); window.dispatchEvent(Object.assign(new Event('gamepadconnected'), { gamepad: pad }));
+      await w(600); // (the pad at rest first: input still held from before Settings closed is ignored on purpose)
+      const seen = new Set(), tops = []; let on = true; (function f() { tops.push(Math.round(d.scrollTop)); const e = d.querySelector('.pad-focus'); if (e) seen.add(e.id || e.textContent.trim().slice(0, 20)); if (on) requestAnimationFrame(f); })();
+      pad.axes[1] = 1; pad.timestamp++; await w(2500); pad.axes[1] = 0; pad.timestamp++; await w(800); on = false;
+      out.steps = seen.size; out.distinct = new Set(tops).size; let jumps = 0; for (let i = 1; i < tops.length; i++) if (Math.abs(tops[i] - tops[i - 1]) > 120) jumps++; out.jumps = jumps;
+      const e = d.querySelector('.pad-focus'); if (e) { const a = e.getBoundingClientRect(), q = d.getBoundingClientRect(); out.inView = a.top >= q.top - 1 && a.bottom <= q.bottom + 1; }
+      try { delete navigator.getGamepads; } catch (x) {} key('Escape'); await w(600); return out; });
+    check('Beta (Windows): in Details a held stick keeps stepping and the panel glides to each item (no jumps), the item in view',
+      dg.steps >= 3 && dg.jumps === 0 && dg.inView === true && (dg.scrolls <= 0 || dg.distinct >= 4), JSON.stringify(dg));
     // A on the theme tiles keeps the highlighted theme (it used to step on to the next one) and puts it on the shelf now
     const th = await w3.page.evaluate(async () => { const w = ms => new Promise(r => setTimeout(r, ms));
       const key = k => document.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true }));
@@ -179,4 +285,50 @@ module.exports = async function betaPass({ browser, base, check, newPage, OUT })
     check('Beta pass (Windows wizard): no script errors', !w2.errors.length, w2.errors.slice(0, 3).join(' | '));
   } catch (e) { check('Beta pass (Windows wizard) ran to the end', false, e && e.stack ? e.stack.split('\n').slice(0, 2).join(' ') : e); }
   await w2.ctx.close();
+
+  // (beta.11) the museum's file box (?mags=1: three Nintendo Power issues): A fans them out, Y / P picks the one you're on
+  // up into your hands (still in its bag), it turns, B puts it back and the fan returns, with no stand-in left behind
+  const w4 = await newPage(browser, null);
+  try {
+    await w4.page.goto(base + '?platform=windows&shelf=1&mags=1');
+    await w4.page.waitForFunction(() => window.Shelf && Shelf._qs && Shelf._qs().g, null, { timeout: 90000, polling: 250 });
+    const f = await w4.page.evaluate(async () => { const w = ms => new Promise(r => setTimeout(r, ms)), out = {};
+      const key = k => document.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true }));
+      const st = () => { const c = Museum.current() || {}; return c.stack ? 'stack' : c.fan ? 'fan' : c.lib ? 'lib' : c.wide ? 'wide:' + c.wide.label : 'other'; };
+      key('m'); for (let i = 0; i < 80 && Shelf.getMode() !== 'museum'; i++) await w(250); await w(4000);
+      for (let i = 0; i < 6 && Museum._dv && Museum._dv(); i++) { Museum.skipDelivery(); await w(800); }
+      for (let i = 0; i < 60 && !((Museum._rack && Museum._rack()) || []).some(x => x.box); i++) await w(300);
+      const it = (Museum._rack() || []).find(x => x.box); if (!it) return { nobox: true };
+      Museum.setRow(it.ri); await w(500);
+      for (let i = 0; i < 10 && !/^wide:Magazines|^lib|^stack/.test(st()); i++) { Museum.move(1, 0); await w(600); }
+      if (/^wide:/.test(st())) { Museum.activate(); await w(1200); }
+      for (let i = 0; i < 8 && st() !== 'stack'; i++) { Museum.move(1, 0); await w(600); }
+      out.at = st(); key('Enter'); await w(1500); out.fan = st(); out.items0 = Museum._rack().length;
+      const t0 = (Museum.current() || {}).lib; out.t0 = t0 && t0.title;
+      // (waits for each state, up to a few seconds: GitHub's software-drawn runner is slower than a PC)
+      const until = async (fn, ms) => { for (let i = 0; i < ms / 150 && !fn(); i++) await w(150); };
+      key('p'); await until(() => Museum.isHolding(), 6000); await w(400); out.held = Museum.isHolding(); out.hint = [...document.querySelectorAll('#musHints > *')].map(h => h.textContent.trim()).join(' | ');
+      key('ArrowRight'); await w(500); key('e'); await w(300); key('q'); await w(600); // (Q / E, L1 / R1 used to flip the fan behind the issue in your hands)
+      const t1 = (Museum.current() || {}).lib; out.t1 = t1 && t1.title;
+      key('Escape'); await until(() => !Museum.isHolding() && st() === 'fan', 6000); await w(400);
+      out.back = st(); out.holding = Museum.isHolding(); out.items1 = Museum._rack().length; const t2 = (Museum.current() || {}).lib; out.t2 = t2 && t2.title;
+      key('Escape'); await until(() => st() === 'stack', 6000); out.closed = st(); return out; });
+    const fd = f.nobox ? { nobox: true } : { back: f.back, holding: f.holding, items: f.items0 + '>' + f.items1, closed: f.closed, at: f.at, fan: f.fan, held: f.held, same: f.t1 === f.t0 && f.t2 === f.t0, t0: f.t0, hint: f.hint };
+    check('Museum (beta.11): in a file box\'s fan, Y / P picks the issue up into your hands (in its bag), and B puts it back into the fan, nothing left behind',
+      f.at === 'stack' && f.fan === 'fan' && f.held === true && /Turn/.test(f.hint) && !!f.t0 && f.t1 === f.t0 && f.t2 === f.t0 && f.back === 'fan' && f.holding === false && f.items1 === f.items0 && f.closed === 'stack', JSON.stringify(fd));
+    // (beta.11) A on a console with no 3D model of its own opens "Add a 3D model" (a file on this PC, or a free model site); Not now closes it
+    const am = await w4.page.evaluate(async () => { const w = ms => new Promise(r => setTimeout(r, ms)), out = {};
+      const key = k => document.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true }));
+      for (let i = 0; i < 4 && Museum.isHolding(); i++) { key('Escape'); await w(600); }
+      Museum.setRow(0); await w(600); Museum.toConsole && Museum.toConsole(); await w(1200);
+      const c = Museum.current() || {}; out.onConsole = !!c.console; out.hasModel = !!(Museum.consoleFit && Museum.consoleFit());
+      key('Enter'); await w(700); const el = document.getElementById('musAdd'); out.open = !!(el && el.classList.contains('on'));
+      out.rows = el ? [...el.querySelectorAll('.mr-row .mr-lbl')].map(r => r.textContent.trim()) : [];
+      key('ArrowUp'); await w(250); out.last = el && (el.querySelector('.mr-row.on .mr-lbl') || {}).textContent;
+      key('Enter'); await w(500); out.closed = !(el && el.classList.contains('on')); out.holding = Museum.isHolding(); return out; });
+    check('Museum (beta.11): A on a console with no 3D model of its own opens "Add a 3D model" (a file, Sketchfab, Poly Pizza, Not now); Not now closes it',
+      am.onConsole && !am.hasModel && am.open && am.rows.length === 4 && /model file on this PC/.test(am.rows[0]) && /Sketchfab/.test(am.rows[1]) && am.last === 'Not now' && am.closed && !am.holding, JSON.stringify(am));
+    check('Museum file box pass: no script errors', !w4.errors.length, w4.errors.slice(0, 3).join(' | '));
+  } catch (e) { check('Museum file box pass ran to the end', false, e && e.stack ? e.stack.split('\n').slice(0, 2).join(' ') : e); }
+  await w4.ctx.close();
 };

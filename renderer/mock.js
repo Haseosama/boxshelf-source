@@ -39,6 +39,8 @@ if(RETRO){[["psx","PlayStation","DuckStation","DuckStation\\duckstation-qt-x64-R
   ["megadrive","Mega Drive","RetroArch","RetroArch-Win64\\retroarch.exe","Mega Drive","md",["Blast Hedgehog","Street Rage"]],
   ["dreamcast","Dreamcast","RetroArch","RetroArch-Win64\\retroarch.exe","Dreamcast","chd",["Soul Spiral","Crazy Courier"]]].forEach(([id,name,en,ex,fo,e,ts])=>{
   consoles.push({id,name,emulatorName:en,exeNames:[ex.split("\\").pop()],extensions:[e],gameArgs:'"{rom}"'});titles[id]=ts;emu[id]=ex;folder[id]=fo})}
+// ?x360=1 (beta.11): an Xbox 360 shelf, for its wrap-around cover
+if(/[?&]x360=1/.test(location.search)){consoles.push({id:"x360",name:"Xbox 360",emulatorName:"Xenia",exeNames:["xenia_canary.exe"],extensions:["iso","xex"],gameArgs:'"{rom}"'});titles.x360=["Halo Frontier","Gear Storm","Forza Lane"];emu.x360="Xenia\\xenia_canary.exe";folder.x360="Xbox 360"}
 // ?wave2=1 (beta.7): RetroArch installed and every other retro console it can run, without games, for the first run's
 // tidy "More consoles" (RetroArch alone ticks none of them)
 const WAVE2=/[?&]wave2=1/.test(location.search);
@@ -46,10 +48,13 @@ if(WAVE2)[["nes","NES"],["n64","Nintendo 64"],["gb","Game Boy"],["gbc","Game Boy
   .forEach(([id,name])=>{if(consoles.some(c=>c.id===id))return;consoles.push({id,name,emulatorName:"RetroArch",retro:true,exeNames:["retroarch.exe"],extensions:["zip"],gameArgs:'"{rom}"'});titles[id]=[];emu[id]="RetroArch-Win64\\retroarch.exe"});
 // three of them with games, for their cases and wordmarks
 if(WAVE2){Object.assign(titles,{saturn:["Astral Knights","Panzer Skies"],arcade:["Street Brawlers II","Metal Squad"],atari2600:["Pit Runner"]});Object.assign(folder,{saturn:"Saturn",arcade:"Arcade",atari2600:"Atari 2600"})}
+// ?dos=1 (beta.11, with wave2): a DOS game, for its floppy disk (off by default: the first-run test wants DOS without games)
+if(WAVE2&&/[?&]dos=1/.test(location.search)){titles.dos=["Dungeon Quest"];folder.dos="DOS"}
 function mockSw2Builds(){const s=config.systems.sw2||{},B=[["Switch 2 emu\\Selvet Forks\\performance-6\\eglantine.exe","Selvet · Performance 6",false],["Switch 2 emu\\Lichii\\pgo\\lichii.exe","Lichii pgo",true],["Switch 2 emu\\Orchid v0.7.0\\orchid.exe","Orchid v0.7.0",false]].map(([e,label,nup],i)=>({exe:root+"\\"+e,group:"",name:label,label,date:Date.UTC(2026,9,20+i),nup}));
   (Array.isArray(s.buildDirs)?s.buildDirs:[]).forEach((d,i)=>B.push({exe:d+"\\fork-"+i+"\\eglantine.exe",group:"",name:"Fork "+(i+1),label:"Fork "+(i+1),date:Date.UTC(2026,10,1),nup:false}));
   (Array.isArray(s.buildExes)?s.buildExes:[]).forEach(x=>B.push({exe:x,group:"",name:x.split("\\").pop(),label:"Added · "+x.split("\\").pop(),date:Date.UTC(2026,10,2),nup:false}));
-  return B}
+  const hid=new Set((Array.isArray(s.buildHidden)?s.buildHidden:[]).map(x=>String(x).toLowerCase())); // (beta.11) removed in Settings, as main.js does
+  return B.filter(b=>!hid.has(b.exe.toLowerCase()))}
 let config={version:1,setupDone:false,systems:{},steam:{enabled:true,path:""},apps:{stremio:{enabled:true,path:""},nuvio:{enabled:true,path:""}},ui:{sound:true,startFullscreen:true}};
 {const q=(location.search.match(/[?&]previews=(\w+)/)||[])[1];if(q)Object.assign(config.ui,{previews:q,previewDelay:1})} // (beta.7) ?previews=details|shelf: video previews on
 consoles.forEach(c=>config.systems[c.id]={enabled:true,emulator:"",gameArgs:c.gameArgs,emulatorArgs:"",romDirs:[],artDir:"",bootOnLaunch:true});
@@ -135,7 +140,8 @@ window.boxshelf={
     // (beta.9) the Custom shelf's games without a cover chosen yet (the batch cover finder)
     pcCoverMissing:async()=>{await wait(80);const s=(window.Shelf&&Shelf._lib?Shelf._lib.shelves():[]).find(x=>x.id==="custom");return (s?s.ids:[]).filter(id=>!(window.__pcCovers||{})[id]).map(id=>({id,title:id,source:"custom"}))},
     launchPc:async id=>{window.__pcLaunched=(window.__pcLaunched||[]).concat(id);await wait(100);if(/^(epic|ubisoft|ea|xbox)-/.test(id))return {external:true};setTimeout(()=>onExit({code:0}),3000);return {pid:4242,cover:3}},pcStatus:async()=>({quiver:root+"\\Quiver",epic:1,gog:1,ubisoft:1,ea:1,xbox:1}),findQuiver:async()=>root+"\\Quiver"}:{}),
-  ...(SW2?{sw2Builds:async()=>{await wait(120);const b=mockSw2Builds();return {builds:b,nup:false,first:b[0].exe}}}:{}),
+  ...(SW2?{sw2Builds:async()=>{await wait(120);const b=mockSw2Builds();return {builds:b,nup:false,first:b[0]&&b[0].exe}},
+    sw2AddBuild:async exe=>{const s=config.systems.sw2=config.systems.sw2||{},low=String(exe).toLowerCase();s.buildHidden=(s.buildHidden||[]).filter(x=>String(x).toLowerCase()!==low);if(!(s.buildExes||[]).some(x=>String(x).toLowerCase()===low))s.buildExes=[...(s.buildExes||[]),exe];return {ok:true}}}:{}),
   downloadCovers:async ids=>({systems:ids.map(id=>({id,name:id,total:10,front:8,back:6,spine:5,had:0,missed:["Example Game"]}))}),
   onCoversProgress:fn=>{(window.__mockCov=window.__mockCov||[]).push(fn)},
   findManuals:async ids=>{await wait(800);return ["Aether Drift","Bramblewood Tales","Cinder Circuit","Coral Kingdom","Echo Hollow","Ferrous Fist","Gale Riders","Kettle Knight","Lumen Isle","Moonmallow","Orbit Odyssey","Sky Harbor"].map((t,i)=>({systemId:"gc",system:"GameCube",title:t,file:root+"\\ROMS\\Gamecube\\"+t+" (USA).rvz",have:i===2,candidates:i===2?[]:[{id:"demo-"+i,title:t+" GameCube Manual",language:"eng",pages:24,score:8,thumb:"",url:"#"},{id:"demo-fr-"+i,title:t+" mode d'emploi",language:"fre",pages:24,score:4.5,thumb:"",url:"#"}]}))},
@@ -212,7 +218,7 @@ window.boxshelf={
         return {done:names.filter(k=>k!=="Dolphin"),later:[],left:names.filter(k=>k==="Dolphin"),emuSetup:{auto:true,graphics:"auto",resume:false,pending:[]}}}}})(),
   getAutostart:async()=>({enabled:false}),setAutostart:async v=>({enabled:!!v,how:"shortcut"}),
   songs:async()=>[],songRead:async()=>{throw new Error("Preview mode")},
-  library:async()=>[],libraryCover:async()=>null,libraryPages:async()=>[],stremioLibrary:async()=>[],stremioPoster:async()=>null,stremioDetails:async()=>null,
+  library:async()=>/[?&]mags=1/.test(location.search)?[1,2,3].map(n=>({id:"np"+n,kind:"magazine",type:"pdf",title:`Nintendo Power Issue ${n} (198${7+n})`,series:"Nintendo Power"})).concat([{id:"gi1",kind:"magazine",type:"pdf",title:"Game Informer Issue 1 (1991)",series:"Game Informer"}]):[] /* (beta.11 ?mags=1: a file box of three issues and one on its own) */,libraryCover:async()=>null,libraryPages:async()=>[],stremioLibrary:async()=>[],stremioPoster:async()=>null,stremioDetails:async()=>null,
   tvScan:async()=>true,tvList:async()=>[],tvAdFor:async()=>null,tvLocal:async()=>null,
   manualCoverage:async()=>consoles.filter(c=>config.systems[c.id]&&config.systems[c.id].romDirs.length).map(c=>({id:c.id,name:c.name,total:titles[c.id].length,have:0,low:0})),
   artCoverage:async()=>consoles.filter(c=>config.systems[c.id]&&config.systems[c.id].romDirs.length).map(c=>({id:c.id,name:c.name,total:titles[c.id].length,front:0,back:0,spine:0,disc:0,frontLow:0,backLow:0,spineLow:0,discLow:0})),
@@ -226,8 +232,8 @@ window.boxshelf={
     say({stage:"Looking up the set-aside games…",checked:12,moved:2});await wait(400);return {checked:12,moved:2,shrunk:1,got:2,cancelled:false}},
   rejectManual:async()=>{const T=window.__mockTurn||[],C=window.__mockCov||[];T.forEach(f=>f({wait:true}));await wait(300);T.forEach(f=>f({go:true}));for(let i=1;i<=3;i++){await wait(200);C.forEach(f=>f({stage:`Aether Drift: page ${i} of 3`}))}return {got:3,pages:window.__mockManual||[]}},
   repairManual:async()=>{const T=window.__mockTurn||[];T.forEach(f=>f({go:true}));await wait(500);return {changed:true,what:"the box front added as its cover",pages:window.__mockManual||[]}},saveOptimizedModel:async()=>true,
-  archiveSearch:async(t,k,page,plain)=>{await wait(250);const p=page||1,n=p<3?36:8;return {page:p,total:80,rows:36,plain:!!plain,items:Array.from({length:n},(_,i)=>({id:`${k==="guide"?"g":"m"}${p}_${i}`,title:`${String(t||"Magazine").replace(/\b\w/g,c=>c.toUpperCase())} ${k==="guide"?"Official Guide Vol.":"Issue"} ${(p-1)*36+i+1}`,date:`199${i%10}-0${1+i%9}`,pages:96+i,downloads:999-i,thumb:"",page:"https://archive.org/details/x"}))}},
-  archiveCheck:async ids=>{await wait(150);return Object.fromEntries((ids||[]).map((id,i)=>[id,/_3$|_7$/.test(id)?{ok:false,why:"borrow-only"}:{ok:true,type:i%3?"file":"pages",size:i%3?4.2e7:0,files:1,pages:120}]))},
+  archiveSearch:async(t,k,page,plain)=>{await wait(250);const p=page||1,n=p<3?36:8;return {page:p,total:80,rows:36,plain:!!plain,items:Array.from({length:n},(_,i)=>({id:/\bbig\b/i.test(t)&&i===0?`${k==="guide"?"g":"m"}${p}_big`:`${k==="guide"?"g":"m"}${p}_${i}`,title:`${String(t||"Magazine").replace(/\b\w/g,c=>c.toUpperCase())} ${k==="guide"?"Official Guide Vol.":"Issue"} ${(p-1)*36+i+1}`,date:`199${i%10}-0${1+i%9}`,pages:96+i,downloads:999-i,thumb:"",page:"https://archive.org/details/x"}))}},
+  archiveCheck:async ids=>{await wait(150);return Object.fromEntries((ids||[]).map((id,i)=>[id,/_3$|_7$/.test(id)?{ok:false,why:"borrow-only"}:/_big$/.test(id)?{ok:true,type:"file",size:7.9e8,files:1,pages:124} /* (beta.11: a 750 MB one, for the size warning) */:{ok:true,type:i%3?"file":"pages",size:i%3?4.2e7:0,files:1,pages:120}]))},
   archiveDownload:(id,kind,title)=>new Promise((res,rej)=>{mockDl[id]={rej,t:setTimeout(()=>{delete mockDl[id];res({existed:false,name:`${title}.pdf`,count:0})},4000)}}),
   archiveCancel:async id=>{const j=mockDl[id];if(!j)return false;clearTimeout(j.t);delete mockDl[id];setTimeout(()=>j.rej(new Error("Cancelled.")),50);return true},
   readingWhere:async()=>({root,custom:false,magazines:root+"\\Magazines",guides:root+"\\Guides"}),

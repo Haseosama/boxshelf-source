@@ -18,7 +18,7 @@ const STYLE={
   ps5:{id:"ps5",rc:0.065,re:0.26,hue:220,ratio:0.787,depth:0.089,edge:.03,caseColor:"#2b62d9",caseSide:"#1f4cb3",spineInk:"#111318",band:{bg:"#ffffff",fg:"#111318",label:"PS5"},spineBand:{bg:"#ffffff",fg:"#111318",label:"PS5"},tint:["#24345e","#0a0f1f"],glow:"#9ec2ff"}, // PS5: the blue case, a white band with the black PS5 logo
   ps3:{id:"ps3",rc:0.065,re:0.26,hue:221,ratio:0.787,depth:0.1,edge:.03,caseColor:"#203553",caseSide:"#16263f",spineInk:"#ffffff",band:{bg:"#0c0d10",fg:"#ffffff",label:"PS3"},spineBand:{bg:"#0c0d10",fg:"#ffffff",label:"PS3"},tint:["#24406e","#090f1e"],glow:"#7ab4ff"},
   ps2:{id:"ps2",rc:0.035,re:0.2,hue:226,ratio:0.711,depth:0.104,edge:.03,caseColor:"#0f1d55",caseSide:"#0a1440",spineInk:"#ffffff",band:{bg:"#0f1d55",fg:"#dfe6ff",label:"PS2"},spineBand:{bg:"#0f1d55",fg:"#dfe6ff",label:"PS2"},tint:["#1b2a7a","#070b24"],glow:"#8fa6ff"},
-  x360:{id:"x360",rc:0.04,re:0.22,hue:115,ratio:0.711,depth:0.104,edge:.03,caseColor:"#1a7f1a",caseSide:"#0f5a12",spineInk:"#ffffff",band:{bg:"#107c10",fg:"#ffffff",label:"XBOX 360"},spineBand:{bg:"#107c10",fg:"#ffffff",label:"X360"},tint:["#145a16","#061a07"],glow:"#7ee87e"},
+  x360:{id:"x360",rc:0.04,re:0.22,hue:115,ratio:0.711,depth:0.104,edge:.018,wrap:1 /* (beta.11) one printed sheet round front, spine and back, as on the real case; it looked like three inlays */,caseColor:"#1a7f1a",caseSide:"#0f5a12",spineInk:"#ffffff",band:{bg:"#107c10",fg:"#ffffff",label:"XBOX 360"},spineBand:{bg:"#107c10",fg:"#ffffff",label:"X360"},tint:["#145a16","#061a07"],glow:"#7ee87e"},
   psp:{id:"psp",rc:0.055,re:0.24,hue:235,ratio:0.589,depth:0.14,edge:.03,caseColor:"#101014",caseSide:"#07070a",spineInk:"#e8e8f0",band:{bg:"#0a0a0d",fg:"#ffffff",label:"PSP"},spineBand:{bg:"#0a0a0d",fg:"#ffffff",label:"PSP"},tint:["#4a4f63","#0b0c12"],glow:"#cfd6ff"},
   n3ds:{id:"n3ds",rc:0.05,re:0.24,hue:352,ratio:1.127,depth:0.1,h:.64,edge:.03,caseColor:"#f4f4f6",caseSide:"#dcdde2",spineInk:"#3a3d45",band:{bg:"#ffffff",fg:"#d40f2a",label:"NINTENDO 3DS"},spineBand:{bg:"#ffffff",fg:"#d40f2a",label:"3DS"},tint:["#c0182e","#3a0710"],glow:"#ff7a8a"},
   pc:{id:"pc",rc:0.02,re:0.16,hue:207,ratio:.667,depth:.07,edge:.015,caseColor:"#1b1f27",caseSide:"#11141a",spineInk:"#dfe8f3",band:null,spineBand:{bg:"#11141a",fg:"#8fb4d9",label:"PC"},tint:["#1d4a6e","#0a121c"],glow:"#8fc3ff"},
@@ -81,7 +81,7 @@ function prepare(list){
   const out=list.map(s0=>{
     const all=s0.games||[],games=hid.size?all.filter(g=>!hid.has(String(g.id))):all,s={...s0,games,_hiddenN:all.length-games.length};
     const items=games.map(g=>{const seed=hash(g.title);return {...g,seed,hue:g.kind==="app"?(APP_HUE[g.appId]||seed%360):seed%360,scene:g.kind==="app"?"media":undefined}});
-    if(s.kind==="console"&&s.hasEmulator){
+    if(s.kind==="console"&&s.hasEmulator&&!(cfgInfo&&cfgInfo.config.ui.emuCase===false)){ // ((beta.11) Settings → Shelf → Emulator case off: no "Open <emulator>" case)
       const t=`Open ${s.emulatorName}`;const seed=hash(t+s.id);
       items.unshift({kind:"emulator",id:"emu-"+s.id,title:t,seed,hue:seed%360,scene:"media",art:{icon:s.emulatorIcon||null}});
     }
@@ -89,8 +89,8 @@ function prepare(list){
     if(s.kind==="console"&&!all.length){const seed=hash("setup"+s.id);items.unshift({kind:"setup",id:"setup-"+s.id,title:"Add games",seed,hue:210,scene:"media",art:{front:Covers.setupFront(STYLE[s.id]||STYLE.media)}})}
     // (beta.7) the Custom shelf ends in an "Add games" tile: Settings → Custom games → Add games (several at once, a folder, Playnite)
     if(s.id==="custom"&&!ANDROID){const seed=hash("setup-custom");items.push({kind:"setup",addGames:true,tail:true,id:"setup-custom",title:"Add games",seed,hue:210,scene:"media",art:{front:Covers.setupFront(STYLE.custom||STYLE.media)}})}
-    // "Surprise me" tile at the front of every shelf that has games on it
-    if((s.kind==="console"||s.kind==="steam")&&s.games.length>1){
+    // "Surprise me" tile at the front of every shelf that has games on it ((beta.11) unless Settings → Shelf → Surprise me is Off)
+    if((s.kind==="console"||s.kind==="steam")&&s.games.length>1&&!(cfgInfo&&cfgInfo.config.ui.surpriseMe==="off")){
       const seed=hash("random"+s.id),style=STYLE[s.id]||STYLE.media;
       items.unshift({kind:"random",id:"rnd-"+s.id,title:"Surprise me",seed,hue:300,scene:"media",art:{front:Covers.randomFront(style)}});
     }
@@ -313,7 +313,7 @@ function measure(){
   // Cases are laid out OS× larger and scaled back down in their transform. Chrome rasterises a layer under
   // perspective at its layout size, so the selected case (pushed towards the camera) would otherwise be
   // magnified from a small raster and go soft; oversampling keeps covers crisp at the screen's real resolution.
-  OS=fxOn?1.4:1.15;a.setProperty("--cw",(bw*OS)+"px");a.setProperty("--ch",(bh*OS)+"px");a.setProperty("--cd",(bd*OS)+"px");a.setProperty("--ce",(bw*s.edge*OS)+"px");a.setProperty("--crc",(bw*(s.rc||.03)*OS)+"px");a.setProperty("--cre",(bd*(s.re||.3)*OS)+"px");a.setProperty("--os",String(OS));
+  OS=fxOn?1.4:1.15;a.setProperty("--cw",(bw*OS)+"px");a.setProperty("--ch",(bh*OS)+"px");a.setProperty("--cd",(bd*OS)+"px");a.setProperty("--ce",(bw*s.edge*OS)+"px");a.setProperty("--cei",(s.wrap?0:bw*s.edge*OS)+"px") /* (beta.11) wrap: the cover runs on round the spine, no border on that side */;a.setProperty("--crc",(bw*(s.rc||.03)*OS)+"px");a.setProperty("--cre",(bd*(s.re||.3)*OS)+"px");a.setProperty("--os",String(OS));
 }
 function applyCase(){const s=st(),a=app.style;a.setProperty("--case",s.caseColor);a.setProperty("--case-side",s.caseSide);a.setProperty("--spine-ink",s.spineInk)}
 // Only the cases near the selection exist in the DOM (like the windowed carousels in ES-DE / Big Box): slots[] holds a
@@ -340,7 +340,7 @@ function mount(s){
   const g=s.g,i=s.i,sh=st();const slot=document.createElement("div");slot.className="slot";
   slot.innerHTML=`<div class="box"><div class="face f-front"><img alt="" draggable="false" decoding="async"><div class="dim"></div><div class="glare"></div><div class="sheen"></div></div><div class="face f-back"></div>
       <div class="face f-left"><div class="spine-band"></div><div class="spine-title"></div></div><div class="face f-right spine2"><div class="spine-band"></div><div class="spine-title"></div></div><div class="face bev bev-fl"></div><div class="face bev bev-fr"></div><div class="face bev bev-bl"></div><div class="face bev bev-br"></div></div>`;
-  const os=cur()===HOME?stOf(g):sh;if(os!==sh){slot.style.setProperty("--bw",`calc(var(--ch) * ${os.ratio})`);slot.style.setProperty("--bd",`calc(var(--ch) * ${os.ratio*os.depth})`);slot.style.setProperty("--edge",`calc(var(--ch) * ${os.ratio*os.edge})`);slot.style.setProperty("--rc",`calc(var(--ch) * ${os.ratio*(os.rc||.03)})`);slot.style.setProperty("--re",`calc(var(--ch) * ${os.ratio*os.depth*(os.re||.3)})`);slot.style.setProperty("--case",os.caseColor);slot.style.setProperty("--case-side",os.caseSide);slot.style.setProperty("--spine-ink",os.spineInk)}
+  const os=cur()===HOME?stOf(g):sh;if(os!==sh){slot.style.setProperty("--bw",`calc(var(--ch) * ${os.ratio})`);slot.style.setProperty("--bd",`calc(var(--ch) * ${os.ratio*os.depth})`);slot.style.setProperty("--edge",`calc(var(--ch) * ${os.ratio*os.edge})`);slot.style.setProperty("--edge-in",`calc(var(--ch) * ${os.wrap?0:os.ratio*os.edge})`);slot.style.setProperty("--rc",`calc(var(--ch) * ${os.ratio*(os.rc||.03)})`);slot.style.setProperty("--re",`calc(var(--ch) * ${os.ratio*os.depth*(os.re||.3)})`);slot.style.setProperty("--case",os.caseColor);slot.style.setProperty("--case-side",os.caseSide);slot.style.setProperty("--spine-ink",os.spineInk)}
   if(isFav(g))slot.classList.add("fav");
   slot.querySelectorAll(".spine-band").forEach(band=>{band.style.background=os.spineBand.bg;band.style.color=os.spineBand.fg;band.textContent=g.kind==="emulator"?"EMU":g.kind==="setup"?"ADD":os.spineBand.label});
   slot.querySelectorAll(".spine-title").forEach(t=>t.textContent=g.title);
@@ -855,7 +855,7 @@ function infoRows(g){
   const s=shelfFor(g);
   if(g.kind==="emulator")return [["Emulator",s.emulatorName],["Program",s.emulator||"Not set"]];
   if(g.kind==="setup")return [["Games found","None yet"],["Fix it in","Settings → "+s.name]];
-  if(g.kind==="random")return [...(g.pick?[["Picked",g.pick.game.title],["Shelf",(g.pick.sh||shelves[g.pick.shelf]).name]]:[]),["Picks from",shuffleAll()?"Every shelf":"This shelf"],["Change","Settings → Shelf"]];
+  if(g.kind==="random")return [...(g.pick?[["Picked",g.pick.game.title],["Shelf",(g.pick.sh||shelves[g.pick.shelf]).name]]:[]),["Picks from",shuffleAll()?"Every shelf":"This shelf"],["Change or turn off","Settings → Shelf → Surprise me"]];
   if(g.kind==="app")return [["Type","Streaming app"],["Program",g.path],["Returns","When you close the app"]];
   if(g.kind==="steam"){const si=g.info||{};return [...(si.release||si.year?[["Released",fmtRelease(si.release,si.year)]]:[]),...(si.dev?[["Developer",si.dev]]:[]),...(si.pub&&si.pub!==si.dev?[["Publisher",si.pub]]:[]),...(si.genres?[["Genre",si.genres.replace(/;/g,", ")]]:[]),...(si.metacritic?[["Metacritic",si.metacritic+" / 100"]]:[]),["Playtime",g.minutes?`${(g.minutes/60).toFixed(1)} hours`:"Not played yet"],["Last played",fmtDate(g.lastPlayed)],["Install size",fmtSize(g.sizeBytes)],["Steam ID",g.appid]];}
   const i=g.info||{};const rows=[];
@@ -914,7 +914,7 @@ function fillDetails(){
   infoRows(g).filter(([k,v])=>!skip.has(k)&&v!=null&&String(v).trim()!=="").forEach(([k,v])=>{ /* (beta.7: a fact with no value isn't shown as an empty box) */const box=document.createElement("div");if(/program|file/i.test(k))box.className="wide";const dt=document.createElement("dt"),dd=document.createElement("dd");dt.textContent=k;dd.textContent=v;box.append(dt,dd);grid.append(box)});
   // what's on file for this game: the box (front, back, spine), the disc / cartridge label, the manual
   {const box=$("dArt"),row=$("dArtRow");row.innerHTML="";const a=g.art||{},show=g.kind==="rom";box.hidden=!show;$("dTabCopy").hidden=!show;
-    if(show){const media=s&&(MEDIA[s.id]||{}).kind==="cart"?"Cartridge":s&&s.id==="psp"?"UMD":"Disc",man=Array.isArray(a.manual)?a.manual.length:0;
+    if(show){const media=s?mediaWord(s.id):"Disc",man=Array.isArray(a.manual)?a.manual.length:0;
       const items=[["Front cover",!!a.front],["Back cover",!!a.back],["Spine",!!a.spine],[media+" art",!!a.disc],["Manual",man>0,man?`${man} pages`:g.manualMiss?"none found online":""]]; /* (beta.9: manualMiss, the search looked and found none) */
       const full=a.front&&a.back&&a.spine;
       items.forEach(([l,ok,extra])=>{const c=document.createElement("span");c.className="d-art-chip"+(ok?" ok":"");c.textContent=(ok?"✓ ":"")+l+(extra?` · ${extra}`:"");row.appendChild(c)});
@@ -958,7 +958,14 @@ const pvUi=k=>cfgInfo&&cfgInfo.config&&cfgInfo.config.ui?cfgInfo.config.ui[k]:un
 const pvMode=()=>pvUi("previews")||"off";
 const pvDelay=()=>Math.max(.5,+pvUi("previewDelay")||1.5)*1000;
 const pvCan=g=>!!(g&&api.previewFind&&(g.kind==="rom"||g.kind==="steam"));
-function pvAsk(g){return api.previewFind({systemId:g.kind==="rom"?(shelfFor(g)||{}).id:null,file:g.kind==="rom"?g.file:null,title:g.fileTitle||g.title,id:g.id,youtube:g.info&&g.info.video||null}).catch(()=>null)}
+const pvReq=g=>({systemId:g.kind==="rom"?(shelfFor(g)||{}).id:null,file:g.kind==="rom"?g.file:null,title:g.fileTitle||g.title,id:g.id,youtube:g.info&&g.info.video||null});
+function pvAsk(g){pvNear(g);return api.previewFind(pvReq(g)).catch(()=>null)}
+/* (beta.11, Windows) 1.5 s after the game you're on asks for its trailer, the ones either side (and the next but one) are
+   made ahead in the background (main: preview:warm, behind any clip asked for now), so they play at once when you get
+   there. Only while that game is still the one you're on; never while the shelf moves */
+function pvNear(g){clearTimeout(PV.nt);if(ANDROID||!api.previewWarm||pvMode()==="off")return;
+  PV.nt=setTimeout(()=>{if(curGame()!==g)return;if(window.BS_BUSY&&BS_BUSY()){pvNear(g);return}const s=cur(),L=(s&&s.items)||[],out=[];
+    for(const d of [1,-1,2]){const x=L[sel+d];if(x!==g&&pvCan(x))out.push(pvReq(x))}if(out.length)api.previewWarm(out).catch(()=>{})},1500)}
 function pvRect(){const b=$("dMediaIn"),d=$("details");if(!b||!d)return null;const r=b.getBoundingClientRect(),p=d.getBoundingClientRect();
   if(r.width<20||r.height<20||r.top<p.top-1||r.bottom>p.bottom+1)return null;return {x:r.left,y:r.top,w:r.width,h:r.height}}
 // (beta.7, Details redone) a video file or Steam clip fills the background behind the case (#pvBack, faded out toward the
@@ -1024,7 +1031,10 @@ if(api.onPreviewYt)api.onPreviewYt(d=>{if(!d||d.id!==PV.yt)return;if(d.state==="
 // (beta.8) a console trailer clip is ready (main/ytclips.js): if you're still on that game it plays like a Steam clip,
 // behind the case in Details or behind the shelf. YouTube's player already playing in the Media tab is left alone (the
 // clip takes over next time the tab opens).
-if(api.onPreviewClip)api.onPreviewClip(d=>{if(!d||!d.id||!d.url)return;
+if(api.onPreviewClip)api.onPreviewClip(d=>{if(!d||!d.id)return;
+  // (beta.11) no clip coming (the trailer is gone and nothing else fits): the waiting box closes now, not after 45 s
+  if(d.none){if(mode==="details"&&PV.key&&PV.r&&PV.r.id===d.id&&(PV.r.type==="pending"||d.gone&&PV.r.type==="youtube")){pvBoxStop();if(d.gone){PV.r=null;$("dTabMedia").classList.remove("has")}} /* (a dead video: YouTube's player would only show its error) */if(PV.bwait&&PV.bwait.id===d.id)PV.bwait=null;return}
+  if(!d.url)return;
   if(mode==="details"&&PV.key&&PV.r&&PV.r.id===d.id&&(PV.r.type==="youtube"||PV.r.type==="pending")){const k=PV.key,ytOn=!!PV.yt;PV.r={type:"file",url:d.url,yt:d.id};
     $("dTabMedia").classList.add("has");$("dNoMedia").hidden=true;
     if(dTabNow()===MEDIA_TAB){if(!ytOn)pvBoxStart(k)}else pvVid($("pvBack"),d.url,k,()=>app.classList.add("pv-det"))}
@@ -1054,7 +1064,7 @@ function pvBackPlay(k,url){if(PV.bkey!==k||mode!=="browse")return;if(window.BS_B
 // test saved since: saving that whole copy would undo them)
 async function uiSet(k,v){if(cfgInfo&&cfgInfo.config)cfgInfo.config.ui[k]=v;try{const c=(await api.getConfig()).config;c.ui[k]=v;await api.saveConfig(c)}catch{}}
 function pvHint(n=0){const ui=cfgInfo&&cfgInfo.config&&cfgInfo.config.ui;if(!ui||!api.previewFind||ANDROID)return;if(!cfgInfo.config.setupDone||ui.previewHint||(ui.previews||"off")!=="off")return;
-  if(mode!=="browse"||sysBusy()){if(n<20)setTimeout(()=>pvHint(n+1),15000);return}
+  if(mode!=="browse"||sysBusy()||(window.BS_TOUR&&BS_TOUR.on())){if(n<20)setTimeout(()=>pvHint(n+1),15000);return} /* (beta.11: not over the shelf tour) */
   uiSet("previewHint",true);toast("New: video previews. Turn them on in Settings → Video previews.")}
 setTimeout(()=>pvHint(),9000);
 // (beta.8) previews and console trailers on, but the trailer helper (main/ytclips.js) isn't there yet: say so once on the
@@ -1094,7 +1104,7 @@ const wnEntry=v=>WN().find(e=>ANDROID?e.android===v:e.version===v)||null;
 function mdBullets(md){return String(md||"").split(/\r?\n/).map(l=>/^\s*[-*•]\s+(.+)$/.exec(l)).filter(Boolean).map(m=>m[1].replace(/\[([^\]]+)\]\([^)]*\)/g,"$1").replace(/\*\*|__|`/g,"").replace(/<[^>]*>/g,"").trim()).filter(Boolean).map(s=>s.length>140?s.slice(0,137)+"…":s)}
 const NOTE={el:null,btns:[],i:0,queue:[],t:0};
 function noteShow(o){
-  if(NOTE.el||mode!=="browse"||(typeof qm!=="undefined"&&qm.open)/* (beta.8: never over the open quick menu) */||sysBusy()||(window.BS_BUSY&&BS_BUSY())||document.querySelector("#setup.on, #settings.on")){o.tries=(o.tries||0)+1;if(o.tries<40){NOTE.queue.push(o);clearTimeout(NOTE.t);NOTE.t=setTimeout(noteNext,6000)}return}
+  if(NOTE.el||mode!=="browse"||(typeof qm!=="undefined"&&qm.open)/* (beta.8: never over the open quick menu) */||(window.BS_TOUR&&BS_TOUR.on())/* (beta.11: nor over the shelf tour; it waits its turn) */||sysBusy()||(window.BS_BUSY&&BS_BUSY())||document.querySelector("#setup.on, #settings.on")){o.tries=(o.tries||0)+1;if(o.tries<40){NOTE.queue.push(o);clearTimeout(NOTE.t);NOTE.t=setTimeout(noteNext,6000)}return}
   const el=document.createElement("div");el.className="note-card"+(o.wide?" wide":"");el.setAttribute("role","dialog");el.setAttribute("aria-label",o.title);
   const add=(tag,cls,text)=>{const e=document.createElement(tag);e.className=cls;e.textContent=text;el.append(e);return e};
   add("div","nc-kick",o.kick);add("div","nc-title",o.title);if(o.sub)add("div","nc-sub",o.sub);
@@ -1145,17 +1155,25 @@ async function pickBuild(g){
     const rows=r.builds.map((b,j)=>{const row=document.createElement("button");row.type="button";row.className="bp-row";const off=r.nup&&!b.nup;row.disabled=off;
       const n=document.createElement("b");n.textContent=b.label;const d=document.createElement("span");d.textContent=off?"can't open .nup games":new Date(b.date).toLocaleDateString(undefined,{month:"short",day:"numeric"});row.append(n,d);
       row.addEventListener("click",()=>{if(!off&&bp){bp.i=j;bpChoose()}});row.addEventListener("pointerenter",()=>{if(!off&&bp&&inputMode==="pointer"){bp.i=j;bpRender()}});card.append(row);return row});
+    // (beta.11) one more build without going to Settings: the last row picks its program, then the list comes back with it
+    const builds=r.builds.slice();
+    if(api.sw2AddBuild&&api.pick){const row=document.createElement("button");row.type="button";row.className="bp-row bp-add";const n=document.createElement("b");n.textContent="+ Add another emulator…";const d=document.createElement("span");d.textContent="eglantine.exe, lichii.exe…";row.append(n,d);
+      const j=rows.length;row.addEventListener("click",()=>{if(bp){bp.i=j;bpChoose()}});row.addEventListener("pointerenter",()=>{if(bp&&inputMode==="pointer"){bp.i=j;bpRender()}});card.append(row);rows.push(row);builds.push({add:true})}
     const f=document.createElement("div");f.className="bp-foot";f.textContent=`${btnWord("a")} start · ${btnWord("back")} back`;card.append(f);
     el.append(card);el.addEventListener("click",e=>{if(e.target===el)bpDone(null)});document.body.append(el);
     // (1.82) start on the suggested build, or else the first that isn't greyed out (row 0 could be)
     let i0=r.builds.findIndex(b=>b.exe===r.first);if(i0<0||rows[i0].disabled)i0=Math.max(0,rows.findIndex(x=>!x.disabled));
-    bp={el,rows,builds:r.builds,i:i0,res,prev:mode};mode="build";bpRender();
+    const done=v=>{if(v!==BP_ADD)return res(v);bpAdd().then(()=>pickBuild(g)).then(res,()=>res(null))};
+    bp={el,rows,builds,i:i0,res:done,prev:mode};mode="build";bpRender();
     requestAnimationFrame(()=>el.classList.add("on"));sfx.flip();
   });
 }
 function bpRender(){if(bp)bp.rows.forEach((r,j)=>r.classList.toggle("on",j===bp.i))}
 function bpMove(d){if(!bp)return;const n=bp.rows.length;let j=bp.i;for(let k=0;k<n;k++){j=(j+d+n)%n;if(!bp.rows[j].disabled)break}if(j!==bp.i){bp.i=j;play_("tick",{dir:d});bpRender()}}
-function bpChoose(){if(bp&&!bp.rows[bp.i].disabled)bpDone(bp.builds[bp.i].exe)}
+function bpChoose(){if(bp&&!bp.rows[bp.i].disabled)bpDone(bp.builds[bp.i].add?BP_ADD:bp.builds[bp.i].exe)}
+const BP_ADD="\u0000add";
+async function bpAdd(){const f=await api.pick({kind:"file",title:"Choose a Switch 2 emulator (eglantine.exe, lichii.exe, orchid.exe…)",filters:/Win/.test(navigator.platform)?[{name:"Programs",extensions:["exe"]}]:undefined}).catch(()=>null),x=typeof f==="string"?f:f&&f.path;
+  if(!x)return;try{await api.sw2AddBuild(x);toast("Emulator added")}catch(e){toast(String(e&&e.message||e).replace(/^Error invoking remote method '[^']+': (Error: )?/,""))}}
 function bpDone(exe){if(!bp)return;const b=bp;bp=null;mode=b.prev;b.el.classList.remove("on");setTimeout(()=>b.el.remove(),260);if(exe==null||exe==="")sfx.back();b.res(exe||null)}
 /* (beta.5) a PC game's cover (Steam, Epic, Quiver, added by hand; console games have the Art Studio): SteamGridDB's
    posters (with the player's key), Steam's own cover, a picture of your own, or back to the automatic one. The arrows /
@@ -1278,7 +1296,7 @@ function openInspect(){uiCrumb("Inspect");
   const ch=Math.min(innerHeight*.58,innerWidth*.34/style.ratio),cw=ch*style.ratio;
   el.style.setProperty("--ch",ch+"px");el.style.setProperty("--cw",cw+"px");el.style.setProperty("--t",(cw*Math.max(.06,style.depth*.7))+"px");el.style.setProperty("--disc",(cw*m.size)+"px");
   el.style.setProperty("--case",style.caseColor);el.style.setProperty("--case-in",style.caseSide);el.style.setProperty("--case-side",style.caseSide);el.style.setProperty("--accent",style.glow);
-  el.classList.remove("open","out","cart","umd");if(m.kind!=="disc")el.classList.add(m.kind);
+  el.classList.remove("open","out","cart","umd","floppy");if(m.kind!=="disc")el.classList.add(m.kind);if(m.form)el.classList.add(m.form);
   const front=frontUrl(g);
   const sp=$("ispSpine");if(g.art&&g.art.spine){sp.hidden=false;sp.src=g.art.spine}else{sp.hidden=true;sp.removeAttribute("src")}
   $("ispSpineText").textContent=g.title;
@@ -1293,12 +1311,12 @@ function openInspect(){uiCrumb("Inspect");
     const from=slotPose(slots[sel]),hs=slots[sel];if(from&&hs&&hs.el){clearTimeout(hs.el._gl);hs.el.classList.add("glowfade","lift")}
     // the shelf box stays until the 3D case is drawn and ready to take its place; then both swap in the same frame
     const onStart=()=>{if(isp.tok!==tok||mode!=="inspect")return;if(hs&&hs.el){hs.el.classList.remove("unhold");hs.el.classList.add("held");isp.held=hs}app.classList.add("inspecting");el.classList.add("on")};
-    el.classList.add("gl");gl=Inspect3D.open({from,where:from?()=>slotPose(hs):null,standIn:from&&hs.img,onStart,sys:s.id,rc:style.rc||.04,ratio:style.ratio,depth:style.depth,caseColor:style.caseColor,caseSide:style.caseSide,spineInk:style.spineInk,edge:style.edge||0,title:g.title,kind:m.kind,size:m.size,
+    el.classList.add("gl");gl=Inspect3D.open({from,where:from?()=>slotPose(hs):null,standIn:from&&hs.img,onStart,sys:s.id,rc:style.rc||.04,ratio:style.ratio,depth:style.depth,caseColor:style.caseColor,caseSide:style.caseSide,spineInk:style.spineInk,edge:style.edge||0,wrap:!!style.wrap,title:g.title,kind:m.kind,form:m.form||"",size:m.size,
       // sized copies (still sharp up close): full-size scans cost ~70 MB of video memory per game and half a second to upload
-      front:thumb(front,1536),back:g.art&&g.art.back?thumb(g.art.back,1536):null,spine:g.art&&g.art.spine?thumb(g.art.spine,1536):null,disc:g.art&&g.art.disc?thumb(g.art.disc,1024):null,manual:(g.art&&g.art.manual&&g.art.manual[0])?thumb(g.art.manual[0],2048):null,modelUrl:th.media||null,modelOpts:th.mediaOpts||null});
+      front:thumb(front,1536),back:g.art&&g.art.back?thumb(g.art.back,1536):null,spine:g.art&&g.art.spine?thumb(g.art.spine,1536):null,disc:g.art&&g.art.disc?thumb(g.art.disc,1024):null,manual:manualCover(g)?thumb(manualCover(g),2048):null,modelUrl:th.media||null,modelOpts:th.mediaOpts||null});
   }}catch(err){gl=false;console.warn("3D inspect failed",err);api.log&&api.log("3D inspect failed: "+(err&&err.stack||err))}
   // the CSS case is only drawn without WebGL; don't decode its scans (or generate a back) when it's hidden
-  if(!gl){$("ispFront").src=front;$("ispManual").src=rdSrc((g.art&&g.art.manual&&g.art.manual[0])||front);$("ispBack").src=backUrl(g)}else["ispFront","ispManual","ispBack"].forEach(id=>$(id).removeAttribute("src"));
+  if(!gl){$("ispFront").src=front;$("ispManual").src=rdSrc(manualCover(g)||front);$("ispBack").src=backUrl(g)}else["ispFront","ispManual","ispBack"].forEach(id=>$(id).removeAttribute("src"));
   if(gl&&!(g.art&&g.art.manual&&g.art.manual.length)&&g.kind==="rom"&&Inspect3D.setManual)makeBooklet(g).then(u=>{if(u&&u[0]&&curGame()===g&&isp.tok===tok&&mode==="inspect")Inspect3D.setManual(u[0])},()=>{}); // only into this same open: a late booklet from a closed Inspect stays off another game's case
   el.classList.toggle("gl",gl);
   // anything still hidden from an earlier inspect that isn't this game's box comes back (fading)
@@ -1337,7 +1355,7 @@ function ispLoop(t){
   const big=Math.abs(ty-isp.ry)>60;const k=easeK(isp.stick&&ISP_STICK_EASE?ISP_STICK_EASE:big?ISP_EASE[0]:ISP_EASE[1],dt),k2=easeK(.1,dt); // (a held stick: follow it closely; buttons and flips keep their slow glide)
   isp.rx+=(tx-isp.rx)*k;isp.ry+=(ty-isp.ry)*k;
   isp.zoom+=(isp.tz-isp.zoom)*k2;isp.px+=(isp.tpx-isp.px)*k2;isp.py+=(isp.tpy-isp.py)*k2;isp.fl+=(isp.tf-isp.fl)*k;
-  if(window.Inspect3D&&Inspect3D.isActive())Inspect3D.setPose(isp.rx,isp.ry,isp.zoom,isp.px,isp.py,t-isp.last<1200||!!isp.drag,isp.fl,ANDROID?isp.sy0:null);
+  if(window.Inspect3D&&Inspect3D.isActive())Inspect3D.setPose(isp.rx,isp.ry,isp.zoom,isp.px,isp.py,t-isp.last<1200||!!isp.drag,isp.fl,isp.sy0);
   else if(spin){
     // CSS case, disc out: turn the whole stage about the disc's own centre (it sits var(--cw)*.3 in front of the case's middle),
     // so it moves in 3D about its own centre: side to side turns it over, up / down tilts it right round; the case is off-screen by then
@@ -1362,13 +1380,16 @@ function ispTurn(dx,dy,raw){const z=raw?1:Math.max(1,isp.tz),lim=ispSpins()?85:5
 // step from there lands under .9, so checking on the way in kept pinning the zoom until the case was opened.)
 function ispZoom(d,analog){const f=analog?Math.pow(1+.022*Math.abs(d),typeof analog==="number"?analog:1):1.12; /* analog: a trigger read every frame (a number: padF, so the zoom speed doesn't follow the refresh rate) */isp.tz=Math.max(.88,Math.min(2.6,d>0?isp.tz*f:isp.tz/f));if(d<0&&isp.tz<=.9){isp.tz=.88;isp.tpx=0;isp.tpy=0}isp.last=performance.now()}
 // The disc (or UMD) is out of its case: it moves in 3D about its own centre (side to side turns it over, up / down tilts it); "turn over" flips it.
-// (Android only: Windows keeps its old disc turn, per the brief. Drop ANDROID&& here and in setPose below to give Windows the same spin.)
-function ispSpins(){return ANDROID&&isp.state===2&&!$("inspect").classList.contains("cart")}
+// (beta.11) Windows too: there the disc used to swing round the case's middle, as if its axle were off to one side
+function ispSpins(){return isp.state===2&&!$("inspect").classList.contains("cart")}
 function ispFlip(){if(ispSpins()){isp.tf=isp.tf?0:180;isp.last=performance.now()}else ispTurn(180,0,true)}
 function ispPan(dx,dy){if(isp.tz<=1)return;const lim=innerWidth*.35*(isp.tz-1);isp.tpx=Math.max(-lim,Math.min(lim,isp.tpx+dx));isp.tpy=Math.max(-lim,Math.min(lim,isp.tpy+dy));isp.last=performance.now()}
 /* manual reader (inside inspect) */
 const rd={pages:[],i:0,open:false};
 function hasManual(g){return !!(g&&g.art&&g.art.manual&&g.art.manual.length)}
+// (beta.10) the booklet's cover in the open case: page 1, except a Wii U e-manual, whose first page is a wide screen shot
+// (it showed cropped and off-centre in the upright booklet): the box front, as the reader opens on
+function manualCover(g){const m=g&&g.art&&g.art.manual;if(!m||!m.length)return null;return /^wiiu:/.test(String(g.id||""))&&g.art.front?g.art.front:m[0]}
 // Games with no manual (most Switch and PS4 games never had a printed one) get a small booklet made from what Boxshelf
 // knows: the cover, the description, the details, the back cover. Clearly marked as made by Boxshelf. Made on demand,
 // kept for the session.
@@ -1592,9 +1613,10 @@ function ispBack(){
   sfx.back();renderIspHints();
 }
 function renderIspHints(){
-  const steps=["Closed","Open","Disc out"],pad=inputMode==="pad",cart=$("inspect").classList.contains("cart");
+  const pad=inputMode==="pad",cart=$("inspect").classList.contains("cart"),flop=$("inspect").classList.contains("floppy");
+  const steps=["Closed","Open",flop?"Floppy out":cart?"Cartridge out":"Disc out"];
   $("ispStep").textContent=steps[isp.state];
-  const next=isp.state===0?"Open case":isp.state===1?(cart?"Take out cartridge":"Take out disc"):"Hold to play";
+  const next=isp.state===0?"Open case":isp.state===1?(flop?"Take out floppy disk":cart?"Take out cartridge":"Take out disc"):"Hold to play";
   let items,acts;
   if(rd.open){$("ispStep").textContent=$("rdCount").textContent||"Manual";items=[[pad?["L","R"]:["←","→"],"Turn page"],[pad?["x"]:["Space"],"Next page"],[pad?["o"]:["Esc"],"Put manual back"]];acts=[()=>rdTurn(1),()=>rdTurn(1),closeReader];
     if(hasManual(curGame())){if(fixOn()){items=[[pad?["tri"]:["W"],"Wrong game: find the right one"],[pad?["sq"]:["R"],"Repair it (cover, pages)"],[pad?["o"]:["Esc"],"Cancel"]];acts=[wrongManual,repairManual,fixCancel]}
@@ -1644,6 +1666,8 @@ addEventListener("unhandledrejection",e=>{try{api.log&&api.log(`rejection: ${e.r
 /* ---------- insert animation: case opens, disc goes into the drive ---------- */
 const MEDIA={gc:{kind:"disc",size:.62,drive:"top"},wii:{kind:"disc",size:.86,drive:"front"},wiiu:{kind:"disc",size:.84,drive:"front"},psp:{kind:"umd",size:.66,drive:"hatch"},sw:{kind:"cart",size:.5,drive:"slot"},sw2:{kind:"cart",size:.5,drive:"slot"},n3ds:{kind:"cart",size:.5,drive:"slot"},ps3:{kind:"disc",size:.78,drive:"front"},ps4:{kind:"disc",size:.78,drive:"front"},ps5:{kind:"disc",size:.78,drive:"front"},x360:{kind:"disc",size:.8,drive:"tray"},ps2:{kind:"disc",size:.8,drive:"tray"}};
 if(window.BS_SYSTEMS_EXTRA)Object.assign(MEDIA,BS_SYSTEMS_EXTRA.media||{});
+// (beta.11) what a console's games come on, in words: DOS games on a floppy disk, cartridges, the PSP's UMD, or a disc
+function mediaWord(id){const m=MEDIA[id]||{};return m.form==="floppy"?"Floppy disk":m.kind==="cart"?"Cartridge":id==="psp"?"UMD":"Disc"}
 const DECK={front:"frontslot",tray:"trayload",hatch:"hatchload"};
 let insertT=null,insertSeatAt=0,slideEndAt=0;const INSERT_3D=false;
 // Every console boots on its own full-screen slide (see bootslide.css). The old disc-into-the-console animation (runInsert below)
@@ -1678,10 +1702,10 @@ function runInsert(s,g,done,hideAfter){
   const ch=Math.min(innerHeight*.46,innerWidth*.3/style.ratio),cw=ch*style.ratio;
   el.style.setProperty("--ch",ch+"px");el.style.setProperty("--cw",cw+"px");el.style.setProperty("--disc",(cw*m.size)+"px");
   el.style.setProperty("--case",style.caseColor);el.style.setProperty("--case-in",style.caseSide);el.style.setProperty("--accent",style.glow);
-  el.classList.remove("go","out","cart","umd");if(m.kind!=="disc")el.classList.add(m.kind);
+  el.classList.remove("go","out","cart","umd","floppy");if(m.kind!=="disc")el.classList.add(m.kind);if(m.form)el.classList.add(m.form);
   tinyBlur((g.art&&(g.art.hero||g.art.front))||front,d=>{el.querySelector(".ins-bg img").src=d||""});
   el.querySelector(".ins-lid-front img").src=front;
-  const man=el.querySelector(".ins-manual");if(man){man.style.backgroundImage=g.art&&g.art.manual&&g.art.manual[0]?`url("${g.art.manual[0]}")`:"";man.style.backgroundSize="cover";man.style.backgroundPosition="center";man.classList.toggle("real",!!(g.art&&g.art.manual&&g.art.manual.length))}
+  const man=el.querySelector(".ins-manual");if(man){man.style.backgroundImage=manualCover(g)?`url("${manualCover(g)}")`:"";man.style.backgroundSize="cover";man.style.backgroundPosition="center";man.classList.toggle("real",!!(g.art&&g.art.manual&&g.art.manual.length))}
   el.querySelector(".ins-label").style.backgroundImage=`url("${front}")`;
   const drive=themes[s.id]&&themes[s.id].console;el.classList.toggle("has-console",!!drive);if(drive)el.querySelector(".ins-console-img").src=drive;
   const mdl=themes[s.id]&&themes[s.id].model;
@@ -1818,7 +1842,7 @@ function musLaunchFrom(){const c=window.Museum&&Museum.current&&Museum.current()
 function musLaunchBack(){const m=musLaunch;musLaunch=null;if(!m||mode!=="browse")return;setTimeout(()=>{if(mode==="browse"&&!sysBusy())openMuseum(m.row||undefined)},0)}
 // library updates that arrive while you're playing / in the museum / Inspect wait here and are applied back on the shelf
 // (beta.10) libLater: a library change that came in mid-scroll ({msgs, rk, n0, watch}); its notes are said once its refresh is applied
-let pendingLib=null,pendingRefresh=false,libLater=null;
+let pendingLib=null,pendingRefresh=false,libLater=null,reshelfWanted=false;
 setInterval(()=>{if((pendingRefresh||pendingLib||libLater)&&mode==="browse"&&performance.now()-returnAt>2500&&!sysBusy()&&!(window.BS_BUSY&&BS_BUSY())&&performance.now()-lastInputAt>800){const lib=pendingLib,L=libLater,need=pendingRefresh||!!lib;pendingLib=null;pendingRefresh=false;libLater=null;const r=need?refresh(true,lib||undefined):null;if(L){L.msgs.forEach(m=>toast(m));if(L.rk)toastDone(L.rk);Promise.resolve(r).then(()=>libAfter(L.n0,L.watch))}}},700);
 // Back to the shelf: the shelf is put in place *under* a plain black cover (no zoom, no fade of the heavy scene), its
 // covers are decoded, and only then the black cover fades away — one light layer fading, so no stutter or half-drawn frame.
@@ -1947,7 +1971,7 @@ async function openAchievements(){
   const g=curGame(),s=shelfFor(g);if(!raHas(s)||!g||g.kind!=="rom"||ach.open||ach.busy)return;
   let p=RA.game.get(s.id+"|"+g.title);if(p===undefined){toast("Loading achievements…");ach.busy=true;try{p=await api.raProgress(s.id,g.title,true);RA.game.set(s.id+"|"+g.title,p||false)}catch(e){toast(e&&e.message||"RetroAchievements didn't answer");if(mode==="details"&&curGame()===g)raRow("err","Achievements didn't load",e&&e.message||"RetroAchievements didn't answer.","Try again");return}finally{ach.busy=false}
     if(mode==="details"&&curGame()===g)raDetails(g)} // the Details row catches up with what just came in
-  if(!p){toast("No achievement set for this game");return}
+  if(!p){toast(`RetroAchievements has no set for ${g.title} yet`);return}
   if(curGame()!==g||(mode!=="browse"&&mode!=="details")||qm.open||sysBusy())return;
   ach.open=true;ach.p=p;ach.all=p.achievements;ach.filter="all";
   const ic=$("achIcon");if(p.icon){ic.src=p.icon;ic.hidden=false}else ic.hidden=true;
@@ -1986,7 +2010,8 @@ function showUnlocks(list){
   RA.game.clear();RA.shelf={};raShelfLoad(); // all shelves: the game may not be on cur() (a Surprise pick from another shelf)
 }
 api.onRaUnlocks&&api.onRaUnlocks(showUnlocks);
-api.onModelInstalled&&api.onModelInstalled(async r=>{toast(`Installed ${r.file} as the ${r.name} console model`);await reloadThemes();if(mode==="browse"&&INSERT_3D)testModel(r.sysId)}); // (Test shows the start-up animation, which is off: the museum shows the model)
+api.onModelInstalled&&api.onModelInstalled(async r=>{toast(`Installed ${r.file} as the ${r.name} console model`);await reloadThemes();if(mode==="browse"&&INSERT_3D)testModel(r.sysId);
+  if(musAdd.wait&&musAdd.wait===r.sysId){musAdd.wait="";musAfterModel(r.sysId)}}); // (beta.11) asked for from the museum: back there with Fit on shelf // (Test shows the start-up animation, which is off: the museum shows the model)
 // a note about new manuals waits for the shelf if it arrives during a game or a panel (it used to be dropped)
 let pendingNote="";
 function manualNote(list){if(!list||!list.length)return"";const up=list.filter(x=>x.upgraded).length,names=list.slice(0,2).map(x=>x.title).join(", ")+(list.length>2?` and ${list.length-2} more`:"");
@@ -2062,7 +2087,7 @@ function renderCustomize(){
       CAN={logo:FILE,boot:FILE,console:FILE,model:FILE,ctl:FILE,media:FILE,findmodel:can("findModel"),restorelogo:can("restoreLogo"),folder:can("openThemeFolder"),rmlogo:can("removeTheme")};
     const B=(a,label,primary)=>(CAN[/^rm/.test(a)?"rmlogo":a]===false)?"":`<button class="chip${primary?" primary":""}" type="button" data-a="${a}">${label}</button>`;
     const R=(title,state,btns,note)=>!btns?"":`<div class="cz-row"><div class="cz-l"><b>${title}</b><span>${state}</span>${note?`<small>${note}</small>`:""}</div><div class="cz-btns">${btns}</div></div>`;
-    const media=(MEDIA[id]||{}).kind==="cart"?"Cartridge":id==="psp"?"UMD":"Disc",autoBoot=!sc||sc.bootOnLaunch!==false;
+    const media=mediaWord(id),autoBoot=!sc||sc.bootOnLaunch!==false;
     row.innerHTML=`<div class="set-head"><div class="set-thumb"></div><div class="set-name"></div></div>`+
       R("Logo",t.logo?"Your image":"Built-in wordmark",B("logo",t.logo?"Replace":"Add image",!t.logo)+(isConsole&&api.findLogos?B("findlogo","Find a logo"):"")+(t.logoPrev?B("restorelogo","Restore previous"):"")+(t.logo?B("rmlogo","Remove"):""),isConsole&&api.findLogos&&!(czPick&&czPick.id===id)?"Find a logo: official logos from Wikimedia Commons, free to use":"")+
       (czPick&&czPick.id===id?czPickHtml(name):"")+
@@ -2110,7 +2135,8 @@ const qm={open:false,r:1,sub:null,sr:0,sc:0,ac:0,rows:[],pv:null,outs:null};
 const ARTC={el:null,on:false,paused:false,stopping:false,done:0,total:0,t:0}; // (beta.10) the background box art run (artCardOn, under misc)
 const QM_THEMES=[["spectrum","Spectrum"],["classic","Classic"],["keys","Keys"],["arcade","Arcade"],["aurora","Aurora"],["midnight","Midnight"],["artwork","Artwork"],["blur","Blur"]];
 QM_THEMES.push(...XTHEMES.map(t=>[t.id,t.name])); // (the extra themes, after the original six)
-const QM_SOUNDS=[["aero","Aero"],["melody","Melody"],["musicbox","Music box"]];
+const QM_SOUNDS=[["aero","Aero"],["melody","Melody"],["musicbox","Music box"],["off","Off"]]; // (beta.11) Off: people didn't find the switch in Settings
+const qsSndNow=ui=>ui.sound===false?"off":ui.soundTheme||"aero";
 const QM_MUSIC=[["drift","Drift"],["night","Night"],["glow","Glow"],["off","Off"]];
 const QM_MVOL=[["0.2","Quiet"],["0.4","Soft"],["0.7","Full"]];
 const qsMvolNow=()=>{const v=mmVol();return QM_MVOL.reduce((a,b)=>Math.abs(+b[0]-v)<Math.abs(+a[0]-v)?b:a)[0]};
@@ -2146,6 +2172,14 @@ function qsBuild(){if(qsEl)return qsEl;qsEl=document.createElement("aside");qsEl
   $("app").appendChild(qsEl);return qsEl}
 function qsGame(){const g=curGame();return g&&isGame(g)&&g.kind!=="random"?g:null}
 function qsAch(){const g=qsGame();if(!RA.on||!g)return null;try{return raHas(shelfFor(g))?raFor(g):null}catch{return null}}
+/* (beta.11) the Trophies row's line for a game with nothing to count yet: why, in words (it said "No trophies for this
+   game yet" even for consoles RetroAchievements doesn't cover, like Switch) */
+function qsAchNone(g){let s=null;try{s=shelfFor(g)}catch{}if(!s||g.kind!=="rom"||!raHas(s))return `RetroAchievements doesn't cover ${s&&s.name?s.name+" games":"this game"}`;
+  return RA.game.get(s.id+"|"+g.title)===false?`RetroAchievements has no set for ${g.title} yet`:"None unlocked yet · A opens the set"}
+/* (beta.11) this game's set fetched the moment the quick menu opens, so Trophies opens at once (main keeps it 10 minutes;
+   a second ask while it's on its way shares the same request) */
+function raPrefetch(g){if(!RA.on||!g||g.kind!=="rom")return;let s=null;try{s=shelfFor(g)}catch{}if(!raHas(s))return;const k=s.id+"|"+g.title;if(RA.game.has(k))return;
+  Promise.resolve(api.raProgress(s.id,g.title,false)).then(p=>{if(!RA.game.has(k))RA.game.set(k,p||false)}).catch(()=>{})}
 function qsThemeNow(){const t=qsUi().theme;return THEMES[t]?t:themeId()}
 function qsSwatch(id){try{const g=curGame()||{hue:220};return THEMES[id].tint(shelfHue(g),g,shelfPos())}catch{return "linear-gradient(135deg,#222,#555)"}}
 // the rows; `lines` opens in place into lines of chips
@@ -2154,9 +2188,9 @@ function qsRows(){const ui=qsUi(),r=qsAch(),g=qsGame(),out=[];
   // Android: the Art Studio one press away (the quick menu needs a shortcut); Windows keeps its Box art button only
   if(ANDROID&&g&&g.kind==="rom"&&g.file&&api.artStudio)out.push({id:"studio",icon:QS_I.image,lbl:"Art Studio",val:()=>(shelfFor(g).name||"This console")+" · every game",go:1});
   out.push({id:"vol",icon:QS_I.vol,lbl:"Volume"});
-  out.push({id:"cust",icon:QS_I.brush,lbl:"Customize",val:()=>`${qsName(QM_THEMES,qsThemeNow())} · ${qsName(QM_SOUNDS,ui.soundTheme||"aero")}`,lines:()=>[
-    {k:"theme",l:"Theme",sw:1,opts:QM_THEMES,cur:qsThemeNow()},{k:"snd",l:"Sounds",opts:QM_SOUNDS,cur:ui.soundTheme||"aero"},
-    ...((ui.soundTheme||"aero")==="melody"&&window.Sound&&Sound.song?[{k:"song",l:"Song",opts:[["next",`${(Sound.song()||{}).name||"This song"} · Next ›`]]}]:[]),
+  out.push({id:"cust",icon:QS_I.brush,lbl:"Customize",val:()=>`${qsName(QM_THEMES,qsThemeNow())} · ${qsSndNow(ui)==="off"?"Sounds off":qsName(QM_SOUNDS,qsSndNow(ui))}`,lines:()=>[
+    {k:"theme",l:"Theme",sw:1,opts:QM_THEMES,cur:qsThemeNow()},{k:"snd",l:"Sounds",opts:QM_SOUNDS,cur:qsSndNow(ui)},
+    ...(qsSndNow(ui)==="melody"&&window.Sound&&Sound.song?[{k:"song",l:"Song",opts:[["next",`${(Sound.song()||{}).name||"This song"} · Next ›`]]}]:[]),
     {k:"music",l:"Menu music",opts:QM_MUSIC,cur:mmPick()},...(mmPick()!=="off"?[{k:"mvol",l:"Music volume",opts:QM_MVOL,cur:qsMvolNow()}]:[]),
     {k:"boot",l:"Boot sound",opts:QM_BOOTS,cur:ui.bootSound||"chime"},{k:"intro",l:"Startup",opts:QM_INTROS,cur:introStyle()}]});
   // the shelf's own look (its logo, 3D console, boot video): straight into Customize on this shelf (it replaced the link that sat at the foot of Customize's chips)
@@ -2191,7 +2225,7 @@ function qsRenderGame(){const box=qsEl.querySelector(".qm-game"),g=qsGame();box.
 function qsRender(){const L=qsEl.querySelector(".qm-list");[...L.children].forEach(e=>{if(!e.classList.contains("qm-hl"))e.remove()});qm.rows=[];qsRenderGame();const g=qsGame();
   qsRows().forEach(r=>{
     if(r.sep){L.appendChild(Object.assign(document.createElement("div"),{className:"qm-sep"}));return}
-    if(r.id==="acts"){const a=document.createElement("div");a.className="qm-acts";const fav=isFav(g),canArt=g.kind==="rom"&&!!(api.artStudio||api.chooseArt);
+    if(r.id==="acts"){const a=document.createElement("div");a.className="qm-acts";const fav=isFav(g),canArt=(g.kind==="rom"&&!!(api.artStudio||api.chooseArt))||(g.kind==="steam"&&!!api.pcCoverOptions); /* (beta.10) Steam and custom games too: their cover picker */
       [["fav",fav?"Favorited":"Favorite",QS_I.heart],["det","Details",QS_I.info],...(canArt?[["art","Box art",QS_I.image]]:[]),["hide","Hide",QS_I.hide]].forEach(([k,l,ic],i)=>{
         const b=document.createElement("button");b.type="button";b.className="qm-act"+(k==="fav"&&fav?" faved":"");b.dataset.k=k;b.innerHTML=ic+`<span>${qsEsc(l)}</span>`;
         b.addEventListener("pointerenter",()=>{if(qm.sub!=null)return;qm.r=0;qm.ac=i;qsPaint()});b.addEventListener("click",()=>{setInput("pointer");if(qm.sub!=null)qsCollapse(true);qm.r=0;qm.ac=i;qsPaint();qsAct(k)});a.appendChild(b)});
@@ -2216,7 +2250,7 @@ function qsFill(x,instant){const inn=document.createElement("div");inn.className
   x.r.lines().forEach(ln=>{const d=document.createElement("div");d.className="qm-line";
     if(ln.note){d.innerHTML=`<div class="qm-note">${qsEsc(ln.note)}</div>`;inn.appendChild(d);return}
     if(ln.info){const r=qsAch(),g=qsGame(),p=r&&r.total?Math.round(r.earned/r.total*100):0,pr=RA.profile;
-      d.innerHTML=`<div class="qm-trow"><div class="qm-ring" style="--p:${p}"><b>${pr&&pr.pic?`<img alt="" src="${qsEsc(pr.pic)}">`:"🏆"}</b></div><div style="min-width:0"><div class="qm-tt">${r&&r.total?(r.mastered==="mastered"?"★ Mastered · ":"")+`${r.earned} of ${r.total} unlocked`:g?"No trophies for this game yet":"Your trophies"}</div><div class="qm-ts">${qsEsc(pr?`${pr.user} · ${pr.points.toLocaleString()} points`:"Signed in")}</div></div></div>`;inn.appendChild(d);return}
+      d.innerHTML=`<div class="qm-trow"><div class="qm-ring" style="--p:${p}"><b>${pr&&pr.pic?`<img alt="" src="${qsEsc(pr.pic)}">`:"🏆"}</b></div><div style="min-width:0"><div class="qm-tt">${r&&r.total?(r.mastered==="mastered"?"★ Mastered · ":"")+`${r.earned} of ${r.total} unlocked`:g?qsAchNone(g):"Your trophies"}</div><div class="qm-ts">${qsEsc(pr?`${pr.user} · ${pr.points.toLocaleString()} points`:"Signed in")}</div></div></div>`;inn.appendChild(d);return}
     if(ln.l)d.innerHTML=`<div class="qm-ll">${qsEsc(ln.l)}</div>`;const o=document.createElement("div");o.className="qm-opts";const arr=[];
     ln.opts.forEach(([v,l,hold])=>{const b=document.createElement("button");b.type="button";b.className="qm-opt"+(ln.sw?" sw":"")+(ln.big?" big":"")+(hold?" danger":"")+(ln.cur===v?" cur":"");b.dataset.k=ln.k;b.dataset.v=v;b.title=l;if(hold)b.dataset.hold="1";
       b.innerHTML=ln.sw?`<i style="background:${qsEsc(qsSwatch(v))}"></i><span class="qm-swl">${qsEsc(l)}</span>`:(hold?'<i class="qm-hb"></i>':"")+`<span>${qsEsc(l)}</span>`; // (1.81: theme tiles carry their names, as in Settings)
@@ -2247,7 +2281,14 @@ function qsHints(){if(!qsEl)return;const pad=showPad(),G=(p,k)=>pad?glyph(p):`<s
   else{const x=qm.rows[qm.r],id=x&&x.r.id;out.push([pad?glyph("↕"):`<span class="g">↑↓</span>`,"Move"]);if(id==="vol")out.push([pad?glyph("↔"):`<span class="g">←→</span>`,"Volume"]);
     out.push([G("x","Enter"),x&&x.r.lines?"Open":"Select"],[G("o","Esc"),"Close"])}
   qsEl.querySelector(".qm-hints").innerHTML=out.map(([k,l])=>`<span class="hint">${k}<span>${qsEsc(l)}</span></span>`).join("")}
-function qmOpen(){if(qm.open||(mode!=="browse"&&mode!=="details")||sysBusy())return;uiCrumb("Quick menu");qsBuild();detailsBack=mode==="details"?curGame():null;if(mode==="details")closeDetails(true); /* (beta.10) back out of the menu: Details again */
+// (beta.10) the quick menu drawn once, unseen, while nothing else is going on: its first drawing by the graphics card
+// (the panel is hidden until opened) froze the first open for ~130 ms. Rows built for the game in front, shown at 0.4%
+// opacity for three frames, then hidden again. Never while the shelf moves; retried a few times if it's busy
+function qmPrewarm(n=0){if(qmPrewarm.done||/[?&]noqmwarm\b/.test(location.search)||window.__bisectNoQmWarm)return;const busy=qm.open||mode!=="browse"||sysBusy()||(window.BS_BUSY&&BS_BUSY())||document.hidden;
+  if(busy){if(n<6)setTimeout(()=>qmPrewarm(n+1),2000);return}qmPrewarm.done=true;
+  try{qsBuild();qm.sub=null;qm.pv=null;qsRender()}catch(e){return}app.classList.add("qm-warm");
+  requestAnimationFrame(()=>requestAnimationFrame(()=>requestAnimationFrame(()=>app.classList.remove("qm-warm"))))}
+function qmOpen(){if(qm.open||(mode!=="browse"&&mode!=="details")||sysBusy())return;uiCrumb("Quick menu");qsBuild();raPrefetch(curGame());detailsBack=mode==="details"?curGame():null;if(mode==="details")closeDetails(true); /* (beta.10) back out of the menu: Details again */
   qm.open=true;qm.sub=null;qm.pv=null;qm.ac=0;qsEl.querySelector(".qm-scroll").scrollTop=0;if(!ANDROID||qm.sig!==qsSig())qsRender(); /* Android: rows already built for this game and these settings (qsFreshSoon) are kept: the press only moves the highlight and slides the panel in */qm.r=qm.rows.findIndex(x=>x.r.id===(ANDROID?"mus":"vol"));if(qm.r<0)qm.r=0; /* (Android 0.3.2: the highlight starts on the top three) */
   // Android: the menu's own rows are measured (qsPaint reads their offsetTop) before the page-wide qm-open class goes on.
   // The other way round, that read made the phone restyle and lay out the whole shelf, every case face included, right
@@ -2298,6 +2339,7 @@ function qsPick(){const x=qm.rows[qm.r];if(!x)return;const r=x.r;
   if(r.id==="vol"){const v=curVol();setVol(v>0?0:(volPrev||.7));if(curVol()>0)play_("tick",{dir:1});qsSoft();return}
   if(r.id==="set"){qmClose(true);play_("open");Setup.open();return}
   if(r.id==="mus"){qmClose(true);openMuseum();return}
+  if(r.id==="ach"&&RA.on){const g=qsGame(),s=g&&shelfFor(g);if(g&&g.kind==="rom"&&raHas(s)&&RA.game.get(s.id+"|"+g.title)!==false){qmClose(true);play_("open");openAchievements();return}} /* (beta.11) signed in, on a console RetroAchievements covers: straight to this game's set, earned or not (the row opens only when there's nothing to show) */
   if(r.id==="studio"){const g=qsGame();qmClose(true);if(g&&ANDROID){play_("panel");Setup.open({page:"artstudio",systemId:shelfFor(g).id});return} /* (Android: the console's whole studio) */if(g)artStudioFor(g);return}
   if(r.id==="cz3d"){const e=qsCzShelf();qmClose(true);play_("open");if(e)custSel=e[0];czPick=null;openCustomize();return}
   if(!r.lines)return;if(qm.sub===qm.r){qsCollapse();return}
@@ -2326,7 +2368,7 @@ function qsChoose(){const f=qsFocusEl();if(!f)return;const k=f.dataset.k,v=f.dat
   if(k==="song"){if(window.Sound&&Sound.nextSong){Sound.nextSong("shelf");play_("tick",{dir:1})}qsSoft();return}
   if(k==="theme"){clearTimeout(qsThemeT);qsThemeT=0;ui.theme=v;themeOverride=null;qm.pv=null;applyTheme();updateBg();play_("open")}
   else if(k==="bg"){ui.background=v;bgOverride=null;qm.pv=null;updateBg();play_("open")}
-  else if(k==="snd"){ui.soundTheme=v;if(window.Sound){Sound.set({theme:v});Sound.play("open")}}
+  else if(k==="snd"){if(v==="off"){ui.sound=false;soundOn=false;if(window.Sound)Sound.set({enabled:false})}else{ui.sound=true;soundOn=true;ui.soundTheme=v;if(window.Sound){Sound.set({enabled:true,theme:v});Sound.play("open")}}musTvVol()} /* (beta.11) Off: the interface sounds (Settings → Sound → Interface sounds) */
   else if(k==="music"){ui.music=v;mmTrack=null;ambient(mmWant);play_(v==="off"?"back":"open")}
   else if(k==="mvol"){ui.musicLevel=+v;mmLevel=null;ambient(mmWant);play_("tick",{dir:1})}
   else if(k==="boot"){ui.bootSound=v;if(window.Sound){Sound.set({boot:v});Sound.play("boot")}}
@@ -2337,7 +2379,7 @@ function qsAct(k){const g=qsGame();if(!g)return;
   if(k==="fav"){toggleFav().then(()=>qsSoft());return}
   if(k==="det"){qmClose(true);openDetails();return}
   if(k==="hide"){qmClose(true);hideGame(g);return}
-  if(k==="art"){qmClose(true);if(api.artStudio&&g.kind==="rom"&&g.file)artStudioFor(g);else qsChooseArt(g)}} /* Box art: straight to this game in the Art Studio picker (My picture… is there for a file of your own) */
+  if(k==="art"){qmClose(true);if(g.kind==="steam"&&api.pcCoverOptions)pcCoverOpen(g);else if(api.artStudio&&g.kind==="rom"&&g.file)artStudioFor(g);else qsChooseArt(g)}} /* (beta.10: a PC game: its cover picker, to choose a front) */ /* Box art: straight to this game in the Art Studio picker (My picture… is there for a file of your own) */
 // Box art: pick an image for this game's front cover (the old one is kept in a "replaced" folder beside the art)
 // One game's Art Studio. The Android build brings its own handheld-sized studio (web-extras/android-studio.js: a row per
 // part, big pictures, the bottom screen as a touch companion); everywhere else it's the Settings picker, as before.
@@ -2359,12 +2401,12 @@ function qmPick(){if(!qm.open)return;if(qm.sub!=null)qsChoose();else qsPick()}
 function qmBack(){if(!qm.open)return;if(qm.sub!=null)qsCollapse();else qmClose()}
 function paintMenuGlyph(){const g=$("menuGlyph");if(!g)return;const h=showPad()?glyph("☰"):'<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>';if(g.dataset.h!==h){g.dataset.h=h;g.innerHTML=h}} // only when it changes: this runs with the hints on every shelf step
 $("menuBtn").addEventListener("click",e=>{e.stopPropagation();setInput("pointer");qm.open?qmClose():qmOpen()});
-addEventListener("keydown",e=>{if(!qm.open)return;if(mode!=="browse"&&mode!=="details"){qmClose(true);return} /* something else took over (Settings, a launch): the menu goes, the key is theirs */const k=e.key;const eat=()=>{e.preventDefault();e.stopImmediatePropagation()};setInput("kbd");
+addEventListener("keydown",e=>{if(!qm.open||(window.BS_TOUR&&BS_TOUR.on()))return;if(mode!=="browse"&&mode!=="details"){qmClose(true);return} /* something else took over (Settings, a launch): the menu goes, the key is theirs */const k=e.key;const eat=()=>{e.preventDefault();e.stopImmediatePropagation()};setInput("kbd");
   if(k==="ArrowLeft"||k==="ArrowRight"){eat();qmSide(k==="ArrowRight"?1:-1)}else if(k==="ArrowDown"||k==="ArrowUp"){eat();qmMove(k==="ArrowDown"?1:-1)}
   else if(k==="Enter"||k===" "){eat();if(!e.repeat)qmPick()}else if(k==="Escape"||k==="Backspace"){eat();qmBack()}else if(k==="Tab"){eat();qmClose()}else if(k.length===1||/^F\d/.test(k)||/^(PageUp|PageDown|Home|End)$/.test(k))qmClose()},true); // a shortcut (M, G, S…) closes the Quick Shelf and does its thing
 addEventListener("keyup",e=>{if(e.key==="Enter"||e.key===" ")qsHoldStop()},true);
 addEventListener("pointerup",()=>{if(qsHr)qsHoldStop()},true);addEventListener("pointercancel",()=>{if(qsHr)qsHoldStop()},true); // letting go of the mouse early cancels a held Restart / Shut down
-let qmEatClick=0;addEventListener("pointerdown",e=>{if(qm.open&&!e.target.closest("#quickMenu,#menuBtn,#toast")){qmEatClick=performance.now();qmClose()}},true);
+let qmEatClick=0;addEventListener("pointerdown",e=>{if(qm.open&&!e.target.closest("#quickMenu,#menuBtn,#toast,#bsTour")){qmEatClick=performance.now();qmClose()}},true);
 addEventListener("click",e=>{if(qmEatClick&&performance.now()-qmEatClick<600){qmEatClick=0;e.stopImmediatePropagation();e.preventDefault()}},true); // the click that closes the menu doesn't also pick a case behind it
 // "LB / RB switch system" on an Xbox pad, "L1 / R1" on PlayStation, "L / R" on Nintendo, "Q / E" on the keyboard
 function custSwitchText(){const el=$("czSwitch");if(el)el.textContent=(showPad()?`${padWord("L1")} / ${padWord("R1")}`:"Q / E")+" switch system."}
@@ -2559,8 +2601,10 @@ function musRoomRender(){const el=musRoomEl(),st=musStyle(),L=musRoomRows(st);mu
   // the buttons, in the pad's own pictures (Xbox, PlayStation or Nintendo, with the confirm swap) or the keys
   const f=document.createElement("div");f.className="mr-foot";const pad=inputMode==="pad",K=k=>`<span class="g">${k}</span>`;
   f.innerHTML=(pad?[[glyph("↕"),"Choose"],[glyph("↔"),"Change"],[glyph("x"),"Switch"],[glyph("o")+glyph("tri"),"Done"]]:[[K("↑")+K("↓"),"Choose"],[K("←")+K("→"),"Change"],[K("Enter"),"Switch"],[K("Esc")+K("Tab"),"Done"]]).map(([k,t])=>`<span class="mr-k">${k}<em>${t}</em></span>`).join("");dock.appendChild(f);el.appendChild(dock);
+  // (beta.11) the row you're on scrolls clear of the dock (it stays stuck to the bottom: the last rows used to end up under it)
+  el.style.scrollPaddingBottom=(dock.offsetHeight+10)+"px";el.style.scrollPaddingTop="10px";
   const on=el.querySelector(".mr-row.on");if(on)on.scrollIntoView({block:"nearest"})}
-function musRoomOpen(){if(mode!=="museum"||musHand().tv||tvS.guide||musHand().delivery||musHand().held||Museum.isHolding())return;musRoom.open=true;Museum.setRoomView&&Museum.setRoomView(true);musRoomEl().classList.add("on");musRoomRender();play_("panel")}
+function musRoomOpen(){if(mode!=="museum"||musAdd.open||musHand().tv||tvS.guide||musHand().delivery||musHand().held||Museum.isHolding())return;musRoom.open=true;Museum.setRoomView&&Museum.setRoomView(true);musRoomEl().classList.add("on");musRoomRender();play_("panel")}
 function musRoomClose(){musRoom.open=false;Museum.setRoomView&&Museum.setRoomView(false);const el=document.getElementById("musRoom");if(el)el.classList.remove("on");play_("back")}
 function musRoomKey(k){const st=musStyle(),L=musRoomRows(st),o=L[Math.max(0,Math.min(musRoom.i,L.length-1))];if(!o)return;
   if(k==="up"){musRoom.i=(musRoom.i+L.length-1)%L.length;play_("tick",{dir:-1})}else if(k==="down"){musRoom.i=(musRoom.i+1)%L.length;play_("tick",{dir:1})}
@@ -2616,6 +2660,35 @@ function musFitKey(k){const f=Museum.consoleFit&&Museum.consoleFit();if(!f){musF
   play_("tick",{dir:d})}
 // Settings → Customize → Fit on shelf: open the museum on that console's shelf with the panel up
 function musFitAt(id){if(mode==="customize")closeCustomize();openMuseum(id);if(mode!=="museum")return;setTimeout(()=>{if(mode!=="museum")return;if(Museum.skipFill)Museum.skipFill();if(Museum.skipDelivery)Museum.skipDelivery(true);Museum.toConsole();if(!musFitOpen())toast("No 3D model on that shelf yet")},700)}
+/* (beta.11) a console with no 3D model of its own: A opens "Add a 3D model": a model file from this PC, or one found on a
+   free model site (the browser opens; Boxshelf installs the first .glb / .gltf / .zip that lands in Downloads). Once
+   it's in, the museum opens again on that console with Fit on shelf, to set it in place. Same look and controls as Room. */
+const musAdd={open:false,i:0,id:"",name:"",wait:""};
+const MUS_ADD=[{k:"file",label:"Choose a model file on this PC…",note:"A .glb or .gltf file you have"},{k:"sketchfab",label:"Find one on Sketchfab",note:"Free downloadable models. Check each one's licence; save it to Downloads and Boxshelf puts it in"},{k:"polypizza",label:"Find one on Poly Pizza",note:"Free low-poly models. Save it to Downloads and Boxshelf puts it in"},{k:"close",label:"Not now",note:""}];
+function musAddEl(){let el=document.getElementById("musAdd");if(!el){el=document.createElement("aside");el.id="musAdd";el.className="mus-room";el.setAttribute("aria-label","Add a 3D model");$("museum").appendChild(el)}return el}
+function musAddRender(){const el=musAddEl();el.innerHTML="";const h=document.createElement("div");h.className="mr-head";h.textContent="Add a 3D model";el.appendChild(h);
+  const g=document.createElement("div");g.className="mr-group";g.textContent=musAdd.name;el.appendChild(g);
+  MUS_ADD.forEach((o,i)=>{const row=document.createElement("div");row.className="mr-row"+(i===musAdd.i?" on":"");const l=document.createElement("span");l.className="mr-lbl";l.textContent=o.label;const v=document.createElement("span");v.className="mr-val";v.textContent=o.k==="close"?"":"›";row.append(l,v);
+    row.addEventListener("click",()=>{setInput("pointer");musAdd.i=i;musAddKey("ok")});el.appendChild(row)});
+  const dock=document.createElement("div");dock.className="mr-dock";const n=document.createElement("div");n.className="mr-note";n.textContent=MUS_ADD[musAdd.i].note||"Then Fit on shelf sets it in place";dock.appendChild(n);
+  const f=document.createElement("div");f.className="mr-foot";const pad=inputMode==="pad",K=k=>`<span class="g">${k}</span>`;
+  f.innerHTML=(pad?[[glyph("↕"),"Choose"],[glyph("x"),"Select"],[glyph("o"),"Back"]]:[[K("↑")+K("↓"),"Choose"],[K("Enter"),"Select"],[K("Esc"),"Back"]]).map(([k,t])=>`<span class="mr-k">${k}<em>${t}</em></span>`).join("");dock.appendChild(f);el.appendChild(dock);
+  el.style.scrollPaddingBottom=(dock.offsetHeight+10)+"px";const on=el.querySelector(".mr-row.on");if(on)on.scrollIntoView({block:"nearest"})}
+function musAddOpen(id,name){if(mode!=="museum"||musAdd.open||!api.setTheme)return false;if(musRoom.open)musRoomClose();musAdd.open=true;musAdd.i=0;musAdd.id=id;musAdd.name=name||id;musAddEl().classList.add("on");musAddRender();play_("panel");return true}
+function musAddClose(quiet){if(!musAdd.open)return;musAdd.open=false;const el=document.getElementById("musAdd");if(el)el.classList.remove("on");if(!quiet)play_("back");renderMusHints()}
+// the model's in: the museum opens again on its console (it loads its models as it opens) with Fit on shelf
+function musAfterModel(id){if(mode==="museum"){closeMuseum();setTimeout(()=>{if(mode==="browse")musFitAt(id)},900)}}
+async function musAddKey(k){if(!musAdd.open)return;const L=MUS_ADD;
+  if(k==="up"||k==="down"){musAdd.i=(musAdd.i+(k==="up"?L.length-1:1))%L.length;play_("tick",{dir:k==="up"?-1:1});musAddRender();return}
+  if(k==="back"){musAddClose();return}
+  if(k!=="ok"&&k!=="right")return;const o=L[musAdd.i],id=musAdd.id,name=musAdd.name;
+  if(o.k==="close"){musAddClose();return}
+  if(o.k==="file"){const f=await api.pick({kind:"file",title:`Choose a ${name} 3D model (.glb)`,filters:[{name:"3D models",extensions:["glb","gltf"]}]}).catch(()=>null);if(!f)return;
+    try{await api.setTheme(id,"model",f)}catch(e){toast(String(e&&e.message||e));play_("error");return}
+    musAddClose(true);play_("open");toast(`3D model set for ${name}. Now fit it on the shelf`);await reloadThemes();musAfterModel(id);return}
+  if(api.findModel){const r=await api.findModel(id,name,o.k).catch(e=>({error:String(e&&e.message||e)}));
+    if(r&&r.ok){musAdd.wait=id;musAddClose(true);toast(`Pick a free, downloadable ${name} model in your browser (check its licence) and save the .glb or .zip to Downloads. Boxshelf puts it in as soon as it lands.`)}
+    else{toast((r&&r.error)||"Couldn't open the site");play_("error")}}}
 /* ---------- the reading corner: your Magazines\ and Guides\ (main/library.js) and a full-screen reader ---------- */
 let libItems=[],libSig="",libCovers=new Map();
 // the museum's movie shelves: your Stremio library (Boxshelf reads it from Stremio's own storage on this PC)
@@ -2639,14 +2712,20 @@ async function libOpen(d,insert){
   if(d&&d.kind==="movie"&&!insert){museumWatch(d);return}
   if(rdr.open)return;const el=rdrEl();rdr.open=true;rdr.item=d;rdr.s=0;rdr.zoom=1;rdr.px=rdr.py=0;rdr.n=0;rdr.cache.clear();const gen=++rdr.gen;
   el.querySelector(".lr-title").textContent=d.title+(d.kind==="movie"?" · Insert":d.series?` · ${d.series}`:"");el.querySelector(".lr-page").textContent="";el.querySelector(".lr-pages").innerHTML="";el.querySelector(".lr-wait").textContent="Opening…";el.classList.add("on","waiting");el.setAttribute("aria-hidden","false");
-  rdrHints();play_("flip");Museum.setPaused&&Museum.setPaused(true,"reader");
+  rdrHints();play_("flip");Museum.setPaused&&Museum.setPaused(true,"reader");el.classList.remove("has-ph");
+  // (beta.11) its saved cover shows at once as the first page while the file opens (a big PDF takes a second or two);
+  // the real page replaces it (rdrBook writes over .lr-pages)
+  if(d.kind!=="movie")libCover(d).then(u=>{if(!u||gen!==rdr.gen||rdr.failed===gen||!el.classList.contains("waiting")||rdr.s>0)return;const box=el.querySelector(".lr-pages");if(box.querySelector(".lr-book"))return;
+    const im=new Image();im.className="lr-ph";im.alt="";im.decoding="async";im.src=u;im.decode().then(()=>{if(gen!==rdr.gen||rdr.failed===gen||!el.classList.contains("waiting")||box.querySelector(".lr-book"))return;box.textContent="";box.appendChild(im);el.classList.add("has-ph")}).catch(()=>{})});
   try{const src=d.kind==="movie"?{type:"images",urls:await movieInsert(d)}:await api.libraryPages(d.id);if(gen!==rdr.gen)return;rdr.src=src;
-    if(src.type==="pdf"){await loadPdfJs();if(!window.pdfjsLib)throw new Error("PDF support didn't load");pdfjsLib.GlobalWorkerOptions.workerSrc="vendor/pdf.worker.min.js";const doc=await pdfjsLib.getDocument({url:src.url,isEvalSupported:false}).promise;if(gen!==rdr.gen){doc.destroy();return}rdr.doc=doc;rdr.n=doc.numPages}
+    // (beta.11) a local PDF (bsfile://) opens in range mode: pdf.js reads only the parts it needs instead of streaming the
+    // whole file (a 758 MB magazine opened in ~0.5 s instead of ~0.8, page 1 in ~1.4 s instead of ~1.8)
+    if(src.type==="pdf"){await loadPdfJs();if(!window.pdfjsLib)throw new Error("PDF support didn't load");pdfjsLib.GlobalWorkerOptions.workerSrc="vendor/pdf.worker.min.js";const ranged=/^bsfile:/i.test(String(src.url||""));const doc=await pdfjsLib.getDocument(ranged?{url:src.url,isEvalSupported:false,disableAutoFetch:true,disableStream:true,rangeChunkSize:262144}:{url:src.url,isEvalSupported:false}).promise;if(gen!==rdr.gen){doc.destroy();return}rdr.doc=doc;rdr.n=doc.numPages}
     else{rdr.n=(src.urls||[]).length}
     if(!rdr.n)throw new Error("No pages found");
     rdrLayout();rdrShow()}
-  catch(e){if(gen!==rdr.gen)return;el.querySelector(".lr-wait").textContent="Couldn't open this one: "+(e&&e.message||e);api.log&&api.log("reader: "+(e&&e.message))}}
-function libClose(){if(!rdr.open)return;rdr.open=false;rdr.gen++;clearTimeout(rdrZoomT);if(rdr.anim)rdr.anim.forEach(x=>{try{x.finish()}catch{}});rdr.turning=false;rdr.queued=null;const el=rdrEl();el.classList.remove("on","waiting");el.setAttribute("aria-hidden","true");el.querySelector(".lr-pages").innerHTML="";rdr.cache.forEach(c=>{c.width=c.height=0});rdr.cache.clear();if(rdr.doc){try{rdr.doc.destroy()}catch{}rdr.doc=null}rdr.src=null;Museum.setPaused&&Museum.setPaused(false,"reader");play_("back");renderMusHints()}
+  catch(e){if(gen!==rdr.gen)return;rdr.failed=gen;el.classList.remove("has-ph");{const bx=el.querySelector(".lr-pages");if(bx&&!bx.querySelector(".lr-book"))bx.textContent=""} /* (beta.11: the stand-in cover goes, so it doesn't look opened) */el.querySelector(".lr-wait").textContent="Couldn't open this one: "+(e&&e.message||e);api.log&&api.log("reader: "+(e&&e.message))}}
+function libClose(){if(!rdr.open)return;rdr.open=false;rdr.gen++;clearTimeout(rdrZoomT);if(rdr.anim)rdr.anim.forEach(x=>{try{x.finish()}catch{}});rdr.turning=false;rdr.queued=null;const el=rdrEl();el.classList.remove("on","waiting","has-ph");el.setAttribute("aria-hidden","true");el.querySelector(".lr-pages").innerHTML="";rdr.cache.forEach(c=>{c.width=c.height=0});rdr.cache.clear();if(rdr.doc){try{rdr.doc.destroy()}catch{}rdr.doc=null}rdr.src=null;Museum.setPaused&&Museum.setPaused(false,"reader");play_("back");renderMusHints()}
 function rdrLayout(){const was=rdrSpread(rdr.s)[0];rdr.dual=innerWidth/innerHeight>1.15;if(rdr.dual){rdr.s=was<=0?0:Math.ceil(was/2)}else rdr.s=Math.max(0,was)}
 // one page drawn at height h (CSS px × devicePixelRatio, capped); kept by "index@height", the last 8 only
 const rdrLoading=new Map();
@@ -2673,8 +2752,8 @@ async function rdrShow(){
   try{const [cl,cr]=await Promise.all([L,R].map(i=>i>=0&&i<rdr.n?rdrPage(i,h).catch(()=>null):null));if(gen!==rdr.gen||s!==rdr.s||rdr.turning)return;if(!cl&&!cr)throw new Error("no page");
     const b=rdrBook(),c0=cr||cl;b.classList.toggle("lr-one",!rdr.dual);if(c0)b.style.aspectRatio=String((rdr.dual?2:1)*c0.width/c0.height);
     if(rdr.dual){rdrPut(b.querySelector(".lr-slot.l"),cl);rdrPut(b.querySelector(".lr-slot.r"),cr)}else{rdrPut(b.querySelector(".lr-slot.l"),cl);rdrPut(b.querySelector(".lr-slot.r"),null)}
-    b.style.transform=`translateX(${rdrShift(L,R)})`;b.classList.toggle("lr-solo",!rdr.dual||L<0||R<0);el.classList.remove("waiting");rdrApply();rdrAhead(s,h)}
-  catch(e){if(gen===rdr.gen){el.querySelector(".lr-wait").textContent="This page didn't load";el.classList.add("waiting")}}}
+    b.style.transform=`translateX(${rdrShift(L,R)})`;b.classList.toggle("lr-solo",!rdr.dual||L<0||R<0);el.classList.remove("waiting","has-ph");rdrApply();rdrAhead(s,h)}
+  catch(e){if(gen===rdr.gen){el.classList.remove("has-ph");el.querySelector(".lr-wait").textContent="This page didn't load";el.classList.add("waiting")}}}
 // the spreads either side, ready before you turn
 function rdrAhead(s,h){[s+1,s-1,s+2].forEach(k=>{if(k<0||k>=rdrCount())return;rdrSpread(k).filter(i=>i>=0&&i<rdr.n&&!rdr.cache.has(i+"@"+h)).forEach(i=>rdrPage(i,h).catch(()=>{}))})}
 function rdrApply(){const box=rdrEl().querySelector(".lr-pages");box.style.transform=`translate(${rdr.px}px,${rdr.py}px)`;box.style.height=(rdr.zoom*100)+"%"}
@@ -2805,7 +2884,7 @@ let musFillT=0,musGuideNext=false;
 // the museum's screen state (shared by B and by hold-to-play from Inspect opened inside it, so neither leaves museum-open behind)
 function museumTeardown(){clearInterval(musFillT);if(tvS.guide)tvGuideClose(true);tvS.tok++;tvFlush();tvS.bad.clear();tvS.list=[];clearInterval(tvS.slideT);tvS.slideT=0;try{Museum.tvOff&&Museum.tvOff()}catch{}if(rdr.open)libClose();if(musFind.open)musFindClose();if(musRoom.open)musRoomClose();if(musFit.open)musFitClose();if(window.Sound&&Sound.roomStop)Sound.roomStop();app.classList.remove("museum-open");const el=$("museum");el.classList.remove("on","filling");el.setAttribute("aria-hidden","true")}
 function closeMuseum(){
-  if(mode!=="museum")return;museumTeardown();
+  if(mode!=="museum")return;if(musAdd.open)musAddClose(true);museumTeardown();
   setTimeout(()=>{if(mode!=="museum")Museum.close()},650);mode="browse";ambient(true);sfx.back();bsSelectSoon(); /* the bottom screen goes back to the shelf */
 }
 // the collection's catalogue: when a game arrived by mail (and its item number), written by the museum as you unbox it
@@ -2844,13 +2923,15 @@ function renderMusHints(){
   const h=$("musHints");const pad=inputMode==="pad";const held=Museum.isHolding(),c=Museum.current();
   tvRefreshHeld();
   if(tvS.guide)tvGuideChrome();
-  const items=tvS.guide?[]/* the guide has its own prompts */:musHand().tv?(()=>{const ch=tvCh(),m=Museum.tvMeta();return [[pad?["↔"]:["←","→"],ch==="ads"?"Next ad":"Next"],[pad?["↕"]:["↑","↓"],"Channel"],...(m&&m.trailer?[[pad?["x"]:["Enter"],"Watch trailer"]]:tvOwned(m)?[[pad?["x"]:["Enter"],"Play this game"]]:[]),[pad?["tri"]:["T"],"TV guide"],[pad?["sq"]:["X"],"Turn off"],[pad?["o"]:["Esc"],"Back"]]})():musHand().opening?[[pad?["x","o"]:["Enter","Esc"],"Skip"]]:c&&c.delivery?(c.delivery.waiting?[[pad?["x"]:["Enter"],"Skip"]]:[[pad?["L"]:["←","→","↑","↓"],"Turn"],[pad?["x"]:["Enter"],"Hold to open"],[pad?["o"]:["Esc"],"Skip"]]):musFind.open?[[pad?["L"]:["←","→","↑","↓"],"Move"],[pad?["R"]:["PgUp","PgDn"],"Scroll"],[pad?["L1","R1"]:["Tab"],"Section"],[pad?["x"]:["Enter"],"Select"],[pad?["o"]:["Esc"],window.BoxshelfIA&&BoxshelfIA.typing&&BoxshelfIA.typing()?"Hide keyboard":"Close"]]:Museum.isWide&&Museum.isWide()?[[pad?["L"]:["←","→","↑","↓"],"Choose a section"],[pad?["x"]:["Enter"],c&&c.wide&&c.wide.empty?"Find some":"Zoom in"],...(c&&c.wide&&c.wide.rack&&c.wide.kind!=="movie"?[[pad?["sq"]:["X"],c.wide.empty?"Find some":"Find more"]]:[]),...(c&&c.wide&&c.wide.tv?[[pad?["tri"]:["T"],"TV guide"]]:[[pad?["tri"]:["L"],pad?"Room":"Lighting"]]),[pad?["o"]:["Esc"],"Back to shelf"]]:musHand().fan?[[pad?["L"]:["←","→"],"Flip"],[pad?["L1","R1"]:["Q","E"],musHand().fanYears?"Year":"Skip 10"],[pad?["x"]:["Enter"],musHand().libWrapped?"Hold to unwrap":"Read"],[pad?["o"]:["Esc"],"Put back"]]:musHand().libHeld?[[pad?["R"]:["←","→"],"Turn"],[pad?["L2","R2"]:["↑","↓"],"Zoom"],[pad?["x"]:["Enter"],musHand().libWrapped?"Hold to unwrap":musHand().libMovie?(musHand().movieDisc?"Watch in Stremio":musHand().movieOpen?"Take out the disc":"Open case"):"Read"],...(musHand().libMovie?[[pad?["sq"]:["X"],"Read insert"]]:[]),[pad?["o"]:["Esc"],musHand().movieDisc?"Put the disc back":musHand().movieOpen?"Close case":"Put back"]]:held&&Museum.isHoldingCase()?musHandHints(pad):held?[[pad?["R"]:["←","→"],"Turn"],[pad?["o"]:["Esc"],"Put down"]]:[[pad?["L"]:["←","→"],pad?"Move":"Case"],...(pad?[]:[[["↑","↓"],"Shelf"]]),[pad?["L1","R1"]:["Q","E"],"Skip 10"],...(pad?[]:[[["L"],"Lighting"]]),...(c&&c.lib&&c.lib.kind!=="movie"?[[pad?["sq"]:["X"],"Find more"]]:[]),[pad?["x"]:["Enter"],c&&c.stack?"Flip through":c&&c.parcel?"Hold to open":"Pick up"],...(c&&c.console&&Museum.consoleFit&&Museum.consoleFit()?[[pad?["sq"]:["X"],"Fit console"]]:[]),[pad?["tri"]:["Tab"],"Room"],[pad?["o"]:["Esc"],"Back to shelf"]];
+  const items=tvS.guide?[]/* the guide has its own prompts */:musHand().tv?(()=>{const ch=tvCh(),m=Museum.tvMeta();return [[pad?["↔"]:["←","→"],ch==="ads"?"Next ad":"Next"],[pad?["↕"]:["↑","↓"],"Channel"],...(m&&m.trailer?[[pad?["x"]:["Enter"],"Watch trailer"]]:tvOwned(m)?[[pad?["x"]:["Enter"],"Play this game"]]:[]),[pad?["tri"]:["T"],"TV guide"],[pad?["sq"]:["X"],"Turn off"],[pad?["o"]:["Esc"],"Back"]]})():musHand().opening?[[pad?["x","o"]:["Enter","Esc"],"Skip"]]:c&&c.delivery?(c.delivery.waiting?[[pad?["x"]:["Enter"],"Skip"]]:[[pad?["L"]:["←","→","↑","↓"],"Turn"],[pad?["x"]:["Enter"],"Hold to open"],[pad?["o"]:["Esc"],"Skip"]]):musFind.open?[[pad?["L"]:["←","→","↑","↓"],"Move"],[pad?["R"]:["PgUp","PgDn"],"Scroll"],[pad?["L1","R1"]:["Tab"],"Section"],[pad?["x"]:["Enter"],"Select"],[pad?["o"]:["Esc"],window.BoxshelfIA&&BoxshelfIA.typing&&BoxshelfIA.typing()?"Hide keyboard":"Close"]]:Museum.isWide&&Museum.isWide()?[[pad?["L"]:["←","→","↑","↓"],"Choose a section"],[pad?["x"]:["Enter"],c&&c.wide&&c.wide.empty?"Find some":"Zoom in"],...(c&&c.wide&&c.wide.rack&&c.wide.kind!=="movie"?[[pad?["sq"]:["X"],c.wide.empty?"Find some":"Find more"]]:[]),...(c&&c.wide&&c.wide.tv?[[pad?["tri"]:["T"],"TV guide"]]:[[pad?["tri"]:["L"],pad?"Room":"Lighting"]]),[pad?["o"]:["Esc"],"Back to shelf"]]:musHand().fan?[[pad?["L"]:["←","→"],"Flip"],[pad?["L1","R1"]:["Q","E"],musHand().fanYears?"Year":"Skip 10"],[pad?["x"]:["Enter"],musHand().libWrapped?"Hold to unwrap":"Read"],[pad?["tri"]:["P"],"Pick up"],[pad?["o"]:["Esc"],"Put back"]]:musHand().libHeld?[[pad?["R"]:["←","→"],"Turn"],[pad?["L2","R2"]:["↑","↓"],"Zoom"],[pad?["x"]:["Enter"],musHand().libWrapped?"Hold to unwrap":musHand().libMovie?(musHand().movieDisc?"Watch in Stremio":musHand().movieOpen?"Take out the disc":"Open case"):"Read"],...(musHand().libMovie?[[pad?["sq"]:["X"],"Read insert"]]:[]),[pad?["o"]:["Esc"],musHand().movieDisc?"Put the disc back":musHand().movieOpen?"Close case":"Put back"]]:held&&Museum.isHoldingCase()?musHandHints(pad):held?[[pad?["R"]:["←","→"],"Turn"],[pad?["o"]:["Esc"],"Put down"]]:[[pad?["L"]:["←","→"],pad?"Move":"Case"],...(pad?[]:[[["↑","↓"],"Shelf"]]),[pad?["L1","R1"]:["Q","E"],"Skip 10"],...(pad?[]:[[["L"],"Lighting"]]),...(c&&c.lib&&c.lib.kind!=="movie"?[[pad?["sq"]:["X"],"Find more"]]:[]),[pad?["x"]:["Enter"],c&&c.stack?"Flip through":c&&c.parcel?"Hold to open":"Pick up"],...(c&&c.console&&Museum.consoleFit&&Museum.consoleFit()?[[pad?["sq"]:["X"],"Fit console"]]:[]),[pad?["tri"]:["Tab"],"Room"],[pad?["o"]:["Esc"],"Back to shelf"]];
   // the same prompts as last time (every case along a shelf has the same ones): left as they are. Rebuilding them on
   // each step of a fast scroll was a few ms of DOM and layout work per case.
   const sig=(pad?"p"+glyph("x"):"k")+JSON.stringify(items);/* (the glyph: a different pad's buttons draw differently) */if(sig===renderMusHints.sig&&h.childElementCount===items.length)return;renderMusHints.sig=sig;h.innerHTML="";
   items.forEach(([keys,label])=>{const b=document.createElement("button");b.type="button";b.className="hint";b.innerHTML=`<span class="keys">${(pad?keys.map(glyph):keys.map(k=>`<span class="g">${k}</span>`)).join("")}</span><span>${label}</span>`;if(label==="TV guide")b.addEventListener("click",()=>{setInput("pointer");museumY()}); /* the mouse's way in */h.appendChild(b)});
 }
 function museumActivate(){bsSelectSoon(); /* the bottom screen shows what's in your hands (picked up, opened…) */
+  // (beta.11) a console with no 3D model of its own: A offers to add one (with one, A takes it in your hands as before)
+  {const c0=Museum.current();if(c0&&c0.console&&c0.row&&c0.row.id&&!Museum.isHolding()&&!(Museum.consoleFit&&Museum.consoleFit())&&musAddOpen(c0.row.id,c0.row.name))return}
   const r=Museum.activate();if(!r){museumSelect.first=true;museumSelect(Museum.current());return}
   if(r.held!=null){play_(r.held?"open":"back");rumble(.2,.4,100);renderMusHints();return}
   if(r.lifted){rumble(.1,.3,80);renderMusHints();setTimeout(renderMusHints,450);return}
@@ -3006,6 +3087,8 @@ function tvGuideGo(tab){if(mode!=="museum"||musHand().delivery||rdr.open||musFin
   tvGuideOpen(tab);return true}
 function museumY(){
   if(tvS.guide){tvGuideClose();return}
+  if(musHand().fan&&Museum.fanLift){if(Museum.fanLift())renderMusHints();else play_("error");return} // (beta.11) a file box's issue into your hands, to turn it over
+
   if(musHand().tv||tvSelWide()&&!musHand().held&&!Museum.isHolding()){tvGuideGo();return} // at the TV (or with it picked in the overview): the guide
   if(musHand().held&&tvS.heldAd){const a=tvS.heldAd;if(tvCh()!=="ads")musSetOpt("tvCh","ads"); /* its ad is on the commercials channel */if(Museum.watchTv()){musHoldEnd&&musHoldEnd();tvStart(a)}return} // a game in your hands: its ad
   if(musHand().delivery||musHand().held||Museum.isHolding())return;musRoom.open?musRoomClose():musRoomOpen()}
@@ -3046,6 +3129,8 @@ function museumPad(gp,t,B,ax){
     const ry=gp.axes[3]||0;if(Math.abs(ry)>.18){const dt=Math.min(50,t-(musHeld.st||t));musFindScroll(Math.sign(ry)*Math.pow((Math.abs(ry)-.18)/.82,1.6)*1.6*dt)}musHeld.st=t; // right stick: scroll, faster the further you push
     edge(gp,4,()=>musFindSection(-1));edge(gp,5,()=>musFindSection(1));
     edge(gp,0,()=>musFindKey("ok"));edge(gp,1,()=>musFindKey("back"));edge(gp,2,()=>musFindKey("back"));return}
+  // (beta.11) Add a 3D model: up / down, A, B (first press moves at once, then repeats while held)
+  if(musAdd.open){const v=(B(13)||ax[1]>.6)?1:(B(12)||ax[1]<-.6)?-1:0,k=v?(v>0?"down":"up"):null;if(k&&k!==musHeld.ak)musAddKey(k);musHeld.ak=k;edge(gp,0,()=>musAddKey("ok"));edge(gp,1,()=>musAddKey("back"));return}
   // the Room menu takes the pad while it's open (Start opens/closes it)
   if(musRoom.open){const h=(B(15)||ax[0]>.55)?1:(B(14)||ax[0]<-.55)?-1:0,v=(B(13)||ax[1]>.6)?1:(B(12)||ax[1]<-.6)?-1:0,k=h?(h>0?"right":"left"):v?(v>0?"down":"up"):null;
     if(k&&k!==musHeld.rk)musRoomKey(k);musHeld.rk=k;edge(gp,0,()=>musRoomKey("ok"));edge(gp,1,()=>musRoomKey("back"));edge(gp,9,()=>musRoomClose());edge(gp,3,()=>musRoomClose());return}
@@ -3069,7 +3154,7 @@ function museumPad(gp,t,B,ax){
 let attract=false,attractT=0,attractDir=1;
 function attractOn(){return !(cfgInfo&&cfgInfo.config.ui.attract===false)}
 function attractCheck(){
-  if(attract||dimOn||qm.open||!attractOn()||mode!=="browse"||slots.length<2||document.hidden)return;
+  if(attract||dimOn||qm.open||!attractOn()||mode!=="browse"||slots.length<2||document.hidden||(window.BS_TOUR&&BS_TOUR.on()))return; /* (beta.11: never under the shelf tour) */
   const mins=(cfgInfo&&+cfgInfo.config.ui.attractMinutes)||3;
   if(performance.now()-lastInputAt>mins*60000){attract=true;app.classList.add("attract");attractT=setTimeout(attractStep,2200)}
 }
@@ -3295,6 +3380,8 @@ addEventListener("keydown",e=>{
   if(mode==="museum"&&tvS.guide){e.preventDefault();setInput("kbd");const k=e.key;if(k==="ArrowDown")tvGuideMove(1);else if(k==="ArrowUp")tvGuideMove(-1);else if(k==="PageDown")tvGuideMove(8);else if(k==="PageUp")tvGuideMove(-8);
     else if(e.repeat)return;else if(k==="ArrowRight"||k==="e"||k==="E"||(k==="Tab"&&!e.shiftKey))tvGuideTab(1);else if(k==="ArrowLeft"||k==="q"||k==="Q"||k==="Tab")tvGuideTab(-1);else if(k==="Enter"||k===" ")tvGuidePick();else if(k==="f"||k==="F"||k==="x"||k==="X")tvGuideFav();else if(k==="Escape"||k==="Backspace"||k==="t"||k==="T")tvGuideClose();return}
   if(mode==="museum"&&(e.key==="t"||e.key==="T")&&!e.repeat&&(musHand().tv||musHand().held||tvSelWide()&&!musRoom.open)){e.preventDefault();setInput("kbd");museumY();return}
+  if(mode==="museum"&&(e.key==="p"||e.key==="P")&&!e.repeat&&musHand().fan&&!musRoom.open){e.preventDefault();setInput("kbd");museumY();return} // (beta.11) pick up the issue you're on
+  if(mode==="museum"&&musAdd.open){e.preventDefault();setInput("kbd");const m={ArrowUp:"up",ArrowDown:"down",ArrowRight:"ok",Enter:"ok"," ":"ok",Escape:"back",Backspace:"back"}[e.key];if(m&&!e.repeat)musAddKey(m);return} // (beta.11) Add a 3D model
   if(mode==="museum"&&(e.key==="Tab"||musRoom.open)){e.preventDefault();setInput("kbd");if(e.key==="Tab"){musRoom.open?musRoomClose():musRoomOpen();return}const m={ArrowUp:"up",ArrowDown:"down",ArrowLeft:"left",ArrowRight:"right",Enter:"ok"," ":"ok",Escape:"back",Backspace:"back"}[e.key];if(m)musRoomKey(m);return}
   if(mode==="museum"&&musReading()&&/^Arrow/.test(e.key)){setInput("kbd");const k=e.key;if(k==="ArrowLeft")Museum.turnPage(-1);else if(k==="ArrowRight")Museum.turnPage(1);else if(k==="ArrowUp")Museum.readerZoom(1);else Museum.readerZoom(-1);renderMusHints();e.preventDefault();return}
   if(mode==="museum"){const k=e.key;setInput("kbd");if(k==="ArrowLeft")Museum.isHolding()?Museum.turn(-90,0):Museum.move(-1,0);else if(k==="ArrowRight")Museum.isHolding()?Museum.turn(90,0):Museum.move(1,0);else if(k==="ArrowUp"){if(musHand().held||musHand().libHeld)Museum.zoomHand(1); /* a magazine / Blu-ray in your hands zooms too, as on the pad */else if(!e.repeat)Museum.move(0,-1)}else if(k==="ArrowDown"){if(musHand().held||musHand().libHeld)Museum.zoomHand(-1);else if(!e.repeat)Museum.move(0,1)}else if(k==="q"||k==="Q"||k==="PageUp")Museum.jump(-10);else if(k==="e"||k==="E"||k==="PageDown")Museum.jump(10);else if(k==="l"||k==="L"){if(!e.repeat)museumLight()}else if(k==="p"||k==="P"||k===" "||k==="x"||k==="X"){if(!e.repeat)museumX()}else if(k==="r"||k==="R"){if(!e.repeat)museumX()}else if((k==="w"||k==="W")&&musReading()){Museum.readerPan(-.25)}else if((k==="s"||k==="S")&&musReading()){Museum.readerPan(.25)}else if(/^[wasdWASD]$/.test(k)&&musHand().held){const q=k.toLowerCase();Museum.panHand(q==="a"?-.08:q==="d"?.08:0,q==="w"?.08:q==="s"?-.08:0)}else if(k==="Enter"){if(!e.repeat){if(musHoldable())musHoldBegin();else museumActivate()}}else if(k==="Escape"||k==="Backspace"||k==="m"||k==="M"){if(!e.repeat)museumBack()}else return;e.preventDefault();return}
@@ -3546,6 +3633,8 @@ function pollBody(t){
   // a screen of the Android build's own that reads the pad itself while it's up (the handheld Art Studio): the shelf's
   // edges are kept in step with what's held, so the press that closes it doesn't land on the shelf too
   if(gp&&window.BS_MODAL){const vg=viewOf(gp);if(BS_MODAL(vg,t)){for(let i=0;i<vg.buttons.length;i++)prevBtn[i]=!!(vg.buttons[i]&&vg.buttons[i].pressed);prevBtn.v=prevBtn.h=true;held.dir=0;return}}
+  /* (beta.11, Windows) the shelf tour (tour.js) has the controller while it's up; edges kept in step as above */
+  if(gp&&window.BS_TOUR&&BS_TOUR.on()){const vg=viewOf(gp);if(document.hasFocus()){if(vg.buttons.some(b=>b&&b.pressed))setInput("pad");BS_TOUR.pad(vg,t)}for(let i=0;i<vg.buttons.length;i++)prevBtn[i]=!!(vg.buttons[i]&&vg.buttons[i].pressed);prevBtn.v=prevBtn.h=true;held.dir=0;return}
   gp=viewOf(gp); // A/B swapped here when the confirm button is B (Settings → Controller), for every screen below
   if(gp&&document.hasFocus()&&dimPad(gp,t))return; // the press that lifted the dimmed screen does nothing else
   if(smoothTest.on){if(gp&&gp.buttons.some(b=>b&&b.pressed)){smoothTest.stop=true;dimSwallowPad=true}return} // the smoothness test: hands off (any button stops it)
@@ -3613,9 +3702,14 @@ function pollBody(t){
     }else{
       // Details and Customize: the D-pad moves a highlight between the panel's buttons, A presses it, B closes
       const panel=mode==="details"?($("dMenu").hidden?$("details"):$("dMenu")):mode==="customize"?$("customize"):null; // (beta.7: the More menu, while open, is all the D-pad moves through)
-      if(panel){held.dir=0;if(h&&!prevBtn.h){setInput("pad");padNav(panel,h>0?"right":"left")}
+      if(panel){held.dir=0;
+        // (beta.11) one way at a time (a diagonal goes the stick's stronger way), and held it repeats like the quick menu:
+        // a step at once, then every 130 ms after 380 ms (it used to take one step per press, so holding did nothing)
+        let hh=h,vv=v;if(hh&&vv){if(Math.abs(ax[0]||0)>=Math.abs(ax[1]||0))vv=0;else hh=0}
+        const pd=hh?(hh>0?"right":"left"):vv?(vv>0?"down":"up"):null;
         // up / down with nothing further that way: page through the text instead (the top of Details has no buttons)
-        if(v&&!prevBtn.v){setInput("pad");if(!padNav(panel,v>0?"down":"up"))panelScroll(panel,v)}
+        const step=d=>{if(!padNav(panel,d)&&(d==="up"||d==="down"))panelScroll(panel,d==="down"?1:-1)};
+        if(pd){setInput("pad");if(pd!==prevBtn.pd){prevBtn.pd=pd;prevBtn.pdT=t+380;step(pd)}else if(t>prevBtn.pdT){prevBtn.pdT=t+130;step(pd)}}else prevBtn.pd=null;
         // right stick: scroll the panel freely, faster the further it's pushed
         {const ry=ax[3]||0;if(Math.abs(ry)>.22){setInput("pad");panel.scrollTop+=ry*Math.abs(ry)*26*padF}}if(mode==="customize"){edge(gp,4,()=>custStep(-1));edge(gp,5,()=>custStep(1))}}
       else{
@@ -3659,8 +3753,9 @@ function padItems(root){return [...root.querySelectorAll("button,input[type=chec
 // of jumping just far enough to show it
 function shotCentre(el){const s=el.parentElement;if(!s)return;const to=Math.max(0,Math.min(s.scrollWidth-s.clientWidth,el.offsetLeft-(s.clientWidth-el.offsetWidth)/2));
   if(Math.abs(to-s.scrollLeft)>1)s.scrollTo({left:to,behavior:document.body.classList.contains("reduce-motion")?"auto":"smooth"})}
-function revealIn(el){const shot=!ANDROID&&el.classList&&el.classList.contains("d-shot")&&el.closest(".details.d-one");if(shot)shotCentre(el);
-  for(let p=el.parentElement;p&&p!==document.body;p=p.parentElement){const cs=getComputedStyle(p),sy=/(auto|scroll)/.test(cs.overflowY)&&p.scrollHeight>p.clientHeight,sx=!(shot&&p===el.parentElement)&&/(auto|scroll)/.test(cs.overflowX)&&p.scrollWidth>p.clientWidth;if(!sy&&!sx)continue;
+// (beta.11) skip: a panel that scrolls on its own (padSet's Details glide): left alone here
+function revealIn(el,skip){const shot=!ANDROID&&el.classList&&el.classList.contains("d-shot")&&el.closest(".details.d-one");if(shot)shotCentre(el);
+  for(let p=el.parentElement;p&&p!==document.body;p=p.parentElement){if(p===skip)continue;const cs=getComputedStyle(p),sy=/(auto|scroll)/.test(cs.overflowY)&&p.scrollHeight>p.clientHeight,sx=!(shot&&p===el.parentElement)&&/(auto|scroll)/.test(cs.overflowX)&&p.scrollWidth>p.clientWidth;if(!sy&&!sx)continue;
   const r=el.getBoundingClientRect(),q=p.getBoundingClientRect();if(sy){if(r.top<q.top+8)p.scrollTop-=q.top+8-r.top;else if(r.bottom>q.bottom-8)p.scrollTop+=r.bottom-q.bottom+8}if(sx){if(r.left<q.left+8)p.scrollLeft-=q.left+8-r.left;else if(r.right>q.right-8)p.scrollLeft+=r.right-q.right+8}}}
 // (beta.9) Details buttons (Windows): Settings' highlight glides to the button you're on: one layer behind the row, moved with a
 // transform (setup.css .d-hl). Measured once per move, after the label opens; never on the Thor, which keeps its own look
@@ -3672,10 +3767,20 @@ function dGlide(el){if(ANDROID)return;const bar=$("details").querySelector(".d-a
   if(first)requestAnimationFrame(()=>{hl.style.transition=""})}
 function padSet(root,el){root.querySelectorAll(".pad-focus").forEach(e=>e.classList.remove("pad-focus"));if(!el){if(root.id==="details")dGlide(null);return}el.classList.add("pad-focus");try{el.focus({preventScroll:true})}catch{}if(root.id==="details")dGlide(el); // (after the focus moves: the button left behind closes first)
   // the Details buttons sit in a bar pinned to the bottom: always in view, so moving onto them never scrolls the text
-  if(el.closest(".d-actions"))return;revealIn(el);
+  if(el.closest(".d-actions"))return;
   // scroll only the panel itself (scrollIntoView also scrolled the whole app sideways and dragged a hidden panel into view);
   // what's under the pinned button bar counts as out of view
-  const sc=el.closest(".settings,.details,.d-scroll")||root,pr=sc.getBoundingClientRect(),er=el.getBoundingClientRect(),bar=sc.querySelector(":scope>.d-actions"),bot=bar?Math.min(pr.bottom,bar.getBoundingClientRect().top):pr.bottom;
+  const sc=el.closest(".settings,.details,.d-scroll")||root;
+  // (beta.11, Windows / Linux) Details glides to the item in one smooth scroll, counted from where a glide already on its
+  // way will end (it used to jump there in two steps, which read as choppy); the Thor keeps its instant scroll
+  /* (beta.11) the button bar only hides what's under it while it's pinned to the panel's bottom: sitting in its place
+     below the header (Windows), the More menu right under it counted as hidden, so every step scrolled the panel on */
+  const barTop=(bar,pr)=>{if(!bar)return pr.bottom;const b=bar.getBoundingClientRect();return b.bottom>=pr.bottom-2?Math.min(pr.bottom,b.top):pr.bottom};
+  if(!ANDROID&&(root.id==="details"||root.id==="dMenu")&&sc.classList.contains("details")){revealIn(el,sc);const pr=sc.getBoundingClientRect(),er=el.getBoundingClientRect(),bot=barTop(sc.querySelector(":scope>.d-actions"),pr);
+    const cur=sc.scrollTop,T0=sc._gT!=null&&performance.now()-(sc._gAt||0)<700?sc._gT:cur,top=er.top-pr.top+cur,btm=er.bottom-pr.top+cur,vis=bot-pr.top;let T=T0;
+    if(btm>T+vis-12)T=btm-vis+24;else if(top<T+12)T=top-24;T=Math.max(0,Math.min(sc.scrollHeight-sc.clientHeight,T));
+    if(Math.abs(T-T0)>.5||Math.abs(T-cur)>.5){sc._gT=T;sc._gAt=performance.now();sc.scrollTo({top:T,behavior:document.body.classList.contains("reduce-motion")?"auto":"smooth"})}return}
+  revealIn(el);const pr=sc.getBoundingClientRect(),er=el.getBoundingClientRect(),bot=barTop(sc.querySelector(":scope>.d-actions"),pr);
   if(er.bottom>bot-12)sc.scrollTop+=er.bottom-bot+24;else if(er.top<pr.top+12)sc.scrollTop-=pr.top-er.top+24}
 // moves to the nearest item in that direction (left/right fall back to the previous/next item in reading order)
 function padNav(root,dir){
@@ -3788,7 +3893,7 @@ function introStyle(){const v=cfgInfo&&cfgInfo.config.ui.bootIntro||(document.do
 // right after the start-up logo; B from it lands on the shelf as usual). Read once, at the first start-up build.
 let openInto=null,musBootSplash=null;
 function startIntoMuseum(){return openInto==="museum"&&!!(cfgInfo&&cfgInfo.config.setupDone)&&!!(window.Museum&&Museum.available())}
-function prewarmSettings(){setTimeout(()=>{const go=()=>{if((mode==="browse")&&cfgInfo&&cfgInfo.config.setupDone&&window.Settings&&Settings.prewarm&&!document.hidden){Settings.prewarm(cfgInfo);if(window.Sound&&Sound.warm)setTimeout(()=>window.requestIdleCallback?requestIdleCallback(()=>Sound.warm(),{timeout:5000}):Sound.warm(),400) /* building the sound buffers waits for a quiet moment (not mid-scroll) */}else if(!prewarmSettings.n||prewarmSettings.n<5){prewarmSettings.n=(prewarmSettings.n||0)+1;prewarmSettings()}};
+function prewarmSettings(){setTimeout(()=>{const go=()=>{if((mode==="browse")&&cfgInfo&&cfgInfo.config.setupDone&&window.Settings&&Settings.prewarm&&!document.hidden){Settings.prewarm(cfgInfo);setTimeout(()=>window.requestIdleCallback?requestIdleCallback(()=>qmPrewarm(),{timeout:4000}):qmPrewarm(),1200) /* (beta.10) the quick menu too, a moment later */;if(window.Sound&&Sound.warm)setTimeout(()=>window.requestIdleCallback?requestIdleCallback(()=>Sound.warm(),{timeout:5000}):Sound.warm(),400) /* building the sound buffers waits for a quiet moment (not mid-scroll) */}else if(!prewarmSettings.n||prewarmSettings.n<5){prewarmSettings.n=(prewarmSettings.n||0)+1;prewarmSettings()}};
   if(window.requestIdleCallback)requestIdleCallback(go,{timeout:3000});else go()},2500)} // a few seconds after start-up, when nothing else is going on
 function afterReveal(){prewarmSettings();if(!startIntoMuseum())return;openInto="done";if(mode==="browse"&&!sysBusy())openMuseum()}
 function revealShelf(){
@@ -3890,7 +3995,9 @@ function applyReduceMotion(on){on=!!on;if(on===reduceMotion&&document.body.class
 // Confirm button: "a" = the bottom button, "b" = the right one, "auto" = as the controller in hand expects (the right
 // one, A, on a Nintendo pad; the bottom one on Xbox / PlayStation)
 let confirmPref="auto";
-function applyConfirm(v){confirmPref=v||"auto";const sw=confirmPref==="b"||(confirmPref==="auto"&&glyphStyle()==="nintendo");if(sw===PADMAP.swap)return;PADMAP.swap=sw;window.BS_PAD={confirm:sw?1:0,back:sw?0:1};
+// (beta.11) "Match my controller" follows the pad in your hands, not the button pictures: choosing Xbox pictures on a Switch
+// pad used to swap its A to Back the moment it saved, so the next A press left the page
+function applyConfirm(v){confirmPref=v||"auto";const sw=confirmPref==="b"||(confirmPref==="auto"&&padStyle==="nintendo");if(sw===PADMAP.swap)return;PADMAP.swap=sw;window.BS_PAD={confirm:sw?1:0,back:sw?0:1};
   {const a=prevBtn[0];prevBtn[0]=prevBtn[1];prevBtn[1]=a} // the remembered up/down states follow the buttons, so nothing fires from the swap itself
   renderHints.sig="";renderHints();if(mode==="inspect")renderIspHints();if(mode==="museum")renderMusHints();updateSkipText();sendShelfInfo()}
 const padView={buttons:[],axes:[],id:"",index:0,mapping:"",connected:true,vibrationActuator:null}; // reused every frame: no allocation
@@ -3941,6 +4048,8 @@ function dimPad(gp,t){let act=false;const bs=gp.buttons;for(let i=0;i<bs.length;
 function applyUi_(u){
   if("safeArea" in u)applySafeArea(u.safeArea);
   if("reduceMotion" in u)applyReduceMotion(u.reduceMotion===true);
+  // (beta.11) the light that sweeps over a box when it lands: on (default), less (only once you stay on a box a moment), off
+  if("boxShine" in u){const v=u.boxShine==="off"||u.boxShine==="less"?u.boxShine:"on";document.body.classList.toggle("shine-off",v==="off");document.body.classList.toggle("shine-less",v==="less")}
   if("clock" in u||"clock24" in u)clock();
   if("confirmButton" in u)applyConfirm(u.confirmButton);
   if("scrollSpeed" in u)scrollCfg=SCROLL[u.scrollSpeed]||SCROLL.normal;
@@ -3976,7 +4085,7 @@ async function chooseGameEmu(g){if(!g||g.kind!=="rom"||!api.gameEmulator)return;
 // the Details panel's "Box art" button (1.67): opens Settings → Art & manuals straight at this game's mix (front, back,
 // spine and disc looks, Pick exact for any part); B there goes up to the console's games, then the Art page
 (function(){const c=$("dActEnd");if(!c||$("dBoxArt"))return;const b=document.createElement("button");b.className="btn";b.type="button";b.id="dBoxArt";b.textContent="Box art";b.title="Choose this game's box art: front, back, spine and disc";
-  b.addEventListener("click",()=>{const g=curGame();if(g&&g.kind==="steam"&&api.pcCoverOptions){closeDetails(true);pcCoverOpen(g);return}if(!g||g.kind!=="rom"||!api.artStudio)return;artStudioFor(g)});c.before(b);
+  b.addEventListener("click",()=>{const g=curGame();if(g&&g.kind==="steam"&&api.pcCoverOptions){closeDetails(true);pcCoverOpen(g);return}if(!g||g.kind!=="rom"||!api.artStudio)return;if(!ANDROID)closeDetails(true);artStudioFor(g)});c.before(b); /* (beta.11, Windows: Details closes first, so one B from the box art lands on the shelf with the new case in view) */
   // (beta.9) PC games: the same picker from a button in the main row, beside Play (consoles keep theirs in More)
   const m=$("dMoreBtn");if(m&&!$("dBoxArtPc")){const p=document.createElement("button");p.className="btn d-ico";p.type="button";p.id="dBoxArtPc";p.hidden=true;p.title="Choose this game's cover";
     p.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v16H4zM4 16l5-5 4 4 3-3 4 4"/><path d="M14.5 8.5h.01"/></svg><span>Box art</span>';
@@ -3998,14 +4107,21 @@ async function chooseGameEmu(g){if(!g||g.kind!=="rom"||!api.gameEmulator)return;
 // Called by the setup screen.
 window.Shelf={
   reloadCustomThemes:()=>loadCustomThemes(), // (Settings → Display: Find themes again / Make a theme from a picture)
+  // (beta.11, Windows) what the shelf tour (tour.js) needs: the screens it opens and closes, and the hint bar's glyphs
+  _tour:{cfg:()=>cfgInfo&&cfgInfo.config,mode:()=>mode,game:()=>curGame(),busy:()=>sysBusy()||!!(window.BS_BUSY&&BS_BUSY()),
+    openDetails:()=>{if(mode==="browse"&&curGame())openDetails()},closeDetails:()=>closeDetails(true),openInspect:()=>{if(mode==="browse"&&curGame())openInspect()},closeInspect:()=>{if(mode==="inspect")closeInspect()},inspectTurn:()=>{if(mode==="inspect"){ispTurn(90,0,true);ispSnap()}},
+    qmOpen:()=>{if(mode==="browse"&&!qm.open)qmOpen()},qmClose:()=>{if(qm.open)qmClose(true)},qmOn:()=>!!qm.open,artStudio:()=>{const g=curGame();if(g&&g.kind==="rom"&&g.file&&api.artStudio)artStudioFor(g)},
+    glyph:k=>glyph(k),pad:()=>showPad(),uiSet:(k,v)=>uiSet(k,v),poke:()=>{lastInputAt=performance.now()}},
   companionPlay,smoothTest,holdInput,
+  _pickBuild:g=>pickBuild(g), // (beta.11, tests) the Switch 2 "Start in which build?" list for a game
+  reshelf:()=>{reshelfWanted=true}, // (beta.11) Settings → Surprise me / Emulator case: the shelves are rebuilt the moment Settings closes (settingsClosed)
   // (beta.5) Settings → Search for a cover: the picker again for that game, with SteamGridDB's covers for the typed name
   pcCoverSearch:(id,term)=>{const g=allShelves.flatMap(s=>s.items||[]).find(x=>x&&x.id===id);if(g)setTimeout(()=>pcCoverOpen(g,term),350)},
   // (beta.9) Settings → Custom games: covers for every custom game (one by one in the picker, or the best match for each)
   pcCoverBatch:()=>setTimeout(()=>pcCoverBatch(),350),pcCoverAuto:()=>pcCoverAuto(),pcCoverUndo:()=>pcCoverUndo(),coverUndoCount:()=>coverUndo.length,
   // (beta.7) test hooks for the library pass: the filters on offer, picking one, the shelf's games and the one in view
   _lib:{filters:()=>filterList(),filter:v=>pickSort(1,v),cur:()=>{const g=curGame();return g?{id:g.id,title:g.title,kind:g.kind}:null},
-    games:()=>(cur()?cur().items.filter(isGame):[]).map(g=>({id:g.id,year:yearOf(g),genres:genresOf(g)})),shelves:()=>shelves.map(s=>({id:s.id,name:s.name,col:!!s.col,ids:(s.items||[]).filter(isGame).map(g=>g.id),last:((s.items||[])[(s.items||[]).length-1]||{}).id||null}))},
+    games:()=>(cur()?cur().items.filter(isGame):[]).map(g=>({id:g.id,year:yearOf(g),genres:genresOf(g)})),shelves:()=>shelves.map(s=>({id:s.id,name:s.name,col:!!s.col,ids:(s.items||[]).filter(isGame).map(g=>g.id),last:((s.items||[])[(s.items||[]).length-1]||{}).id||null,random:(s.items||[]).some(i=>i&&i.kind==="random")}))},
   // (beta.7) Settings changed your collections: their shelves are made again (the one you're on stays, if it still has games)
   previewStop:()=>{if(PV){pvStop();pvBackStop()}},setCollections:list=>{if(!cfgInfo||!Array.isArray(list))return;cfgInfo.config.ui.collections=list;const was=cur();buildHome();
     // (beta.10) the shelf you were on is gone (buildHome keeps the index, so another shelf slid into it): show that shelf's own cases, from its first game
@@ -4016,7 +4132,8 @@ window.Shelf={
   refresh,flushSaves,toast,shuffle,cleanLogo,attractNow:()=>{lastInputAt=-1e9;attractCheck()},sound:(o)=>{if(o&&o.enabled!=null){soundOn=!!o.enabled;musTvVol()}if(o&&o.volume!=null&&cfgInfo){cfgInfo.config.ui.volume=+o.volume;paintVol()}if(window.Sound){Sound.set(o);if(o.preview)Sound.play(o.preview);if(o.music!=null||o.musicLevel!=null){if(o.music!=null)mmTrack=String(o.music);if(o.musicLevel!=null)mmLevel=+o.musicLevel;ambient(mmWant)}else if(o.enabled===true)ambient(mmWant)}},raReload:()=>{RA.shelf={};RA.game.clear();raInit()},
   // Settings closed without a rescan: pick up what refresh() used to re-read (sound on/off, the volume icon, prompts)
   settingsClosed:()=>{if(cpReturn){const x=cpReturn;cpReturn=null;const g=allShelves.flatMap(s=>s.items||[]).find(y=>y&&y.id===x.id);if(g)setTimeout(()=>pcCoverOpen(g,x.term),350)} /* (beta.9) back from the SteamGridDB key's page: the cover picker again */
-    if(!cfgInfo)return;const u=cfgInfo.config.ui;soundOn=u.sound!==false;paintVol();buttonsPref=u.buttons||"auto";applyUiAll();renderHints.sig="";renderHints();updateSkipText();lastInputAt=performance.now()},
+    if(!cfgInfo)return;const u=cfgInfo.config.ui;soundOn=u.sound!==false;paintVol();buttonsPref=u.buttons||"auto";applyUiAll();renderHints.sig="";renderHints();updateSkipText();lastInputAt=performance.now();
+    if(reshelfWanted&&lastLib){reshelfWanted=false;pendingLib=null;refresh(true,lastLib)}}, // (beta.11) Surprise me / Emulator case changed: the shelves without the case at once (it lingered a few seconds)
   // Settings reads the controller itself: its presses count as activity (attract, dimming), and none of them act while
   // the dimmed screen is up or the press that woke it is still held
   _wake:()=>{lastInputAt=dimAt=performance.now()},padBlocked:()=>dimOn||dimSwallowPad,

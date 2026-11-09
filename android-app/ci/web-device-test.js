@@ -1567,6 +1567,17 @@ server.listen(0, async () => {
     await require('./addgames-pass')({ browser, base, check, newPage, OUT });
     // ---------- pass 24: beta testers' reports (beta.10): 8BitDo prompts, ARMSX2 and unknown emulator apps on Android, custom games on the PC shelf, the Switch's emulator name (ci/issues-test.js) ----------
     await require('./issues-test')({ browser, base, check, newPage, OUT });
+    // ---------- pass 25 (beta.11): DuckStation under any of its names, DeSmuME, mGBA and VisualBoyAdvance-M found and started with their own options (ci/emu-names-test.js, plain Node) ----------
+    { const r = require('child_process').spawnSync(process.execPath, [require('path').join(__dirname, 'emu-names-test.js')], { encoding: 'utf8', timeout: 60000 });
+      check('Other emulators (DuckStation builds, DeSmuME, mGBA, VisualBoyAdvance-M) are found and get their own launch options', r.status === 0, ((r.stdout || '') + (r.stderr || '')).split('\n').filter(l => /FAIL|Error/.test(l)).slice(0, 4).join(' | ')); }
+    // ---------- pass 26 (beta.11): the shelf tour on Windows, from Settings → Shelf; never on Android (ci/tour-test.js) ----------
+    await require('./tour-test')({ browser, base, check, newPage, OUT });
+    // (beta.11) console trailers: a dead or missing trailer link gets YouTube searched for one (ci/ytsearch-test.js, plain Node)
+    { const r = require('child_process').spawnSync(process.execPath, [require('path').join(__dirname, 'ytsearch-test.js')], { encoding: 'utf8', timeout: 60000 });
+      check('Console trailers: a game with no trailer link, or a dead one, gets its trailer found by a YouTube search (remembered)', r.status === 0, ((r.stdout || '') + (r.stderr || '')).split('\n').filter(l => /FAIL|Error/.test(l)).slice(0, 4).join(' | ')); }
+    // (beta.11) magazine downloads: a crawling connection is picked up again from where it got to (ci/archive-speed-test.js, plain Node)
+    { const r = require('child_process').spawnSync(process.execPath, [require('path').join(__dirname, 'archive-speed-test.js')], { encoding: 'utf8', timeout: 90000 });
+      check('Magazine downloads: a crawling connection is dropped and carries on from where it got to; the file arrives whole', r.status === 0, ((r.stdout || '') + (r.stderr || '')).split('\n').filter(l => /FAIL|Error/.test(l)).slice(0, 4).join(' | ')); }
     } // ===== end of group windows =====
     check('Every file the page loads is in the APK', !missing.size, [...missing].join(', '));
   } catch (e) { check('Test ran to the end', false, e && e.stack ? e.stack.split('\n').slice(0, 2).join(' ') : e); }

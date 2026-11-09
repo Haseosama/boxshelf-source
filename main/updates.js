@@ -5,6 +5,9 @@
 const https = require('https');
 
 const REPO = 'sassiestrhihno/boxshelf-beta';
+// (beta.11) releases are also built in public from the source repo (its "Release build" workflow): both lists are read,
+// the newest version wins, and on a tie the beta page (with the full notes) is the one opened
+const REPOS = [REPO, 'sassiestrhihno/boxshelf-source'];
 const PAGE = `https://github.com/${REPO}`;
 const LINKS = { page: PAGE, releases: `${PAGE}/releases`, issues: `${PAGE}/issues/new/choose` };
 
@@ -56,9 +59,11 @@ async function check(current, force = false) {
   inflight = (async () => {
     try {
       // the list, not /releases/latest: that one skips pre-releases, and every beta is one
-      const list = await getJson(`https://api.github.com/repos/${REPO}/releases?per_page=10`, current);
-      const best = (Array.isArray(list) ? list : []).filter(r => r && !r.draft && parse(r.tag_name))
-        .sort((p, q) => compare(q.tag_name, p.tag_name))[0];
+      const got = await Promise.allSettled(REPOS.map(r => getJson(`https://api.github.com/repos/${r}/releases?per_page=10`, current)));
+      if (!got.some(g => g.status === 'fulfilled')) throw got[0].reason;
+      // stable sort: on equal versions the earlier repo's release (the beta page) stays first
+      const list = got.flatMap(g => g.status === 'fulfilled' && Array.isArray(g.value) ? g.value : []);
+      const best = list.filter(r => r && !r.draft && parse(r.tag_name)).sort((p, q) => compare(q.tag_name, p.tag_name))[0];
       const latest = best ? String(best.tag_name).replace(/^v/, '') : null;
       last = { current, latest, newer: !!latest && compare(latest, current) > 0, url: best ? best.html_url : LINKS.releases,
         notes: best && typeof best.body === 'string' ? best.body.slice(0, 2000) : '', checkedAt: Date.now() };

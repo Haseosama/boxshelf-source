@@ -1378,14 +1378,27 @@ function sw2Roots() {
 }
 // (1.82) the builds in the build folders, plus this game's own choice and the shelf's build when they sit elsewhere (the
 // picker used to leave them out, and Play then turned them down); (beta.3) and the single builds added in Settings
+// (beta.11) builds removed in Settings (sw2.buildHidden: their exes) are left out, wherever they were found; adding one
+// again brings it back
 async function sw2BuildList(file) {
-  const list = await nx2.builds(sw2Roots()), low = p => path.resolve(p || '.').toLowerCase();
+  const low = p => path.resolve(p || '.').toLowerCase(), hidden = new Set(sw2Added('buildHidden').map(low));
+  const list = (await nx2.builds(sw2Roots())).filter(b => !hidden.has(low(b.exe)));
   for (const [exe, hint] of [[file ? gameEmuOverride('sw2', file) : '', "This game's"], [emuPath((cfg.systems.sw2 || {}).emulator || ''), 'Shelf'], ...sw2Added('buildExes').map(x => [x, 'Added'])]) {
-    if (!exe || list.some(b => low(b.exe) === low(exe)) || !paths.isFile(exe)) continue;
+    if (!exe || hidden.has(low(exe)) || list.some(b => low(b.exe) === low(exe)) || !paths.isFile(exe)) continue;
     const b = await nx2.buildOf(exe, hint); if (b) list.push(b);
   }
   return list;
 }
+// (beta.11) "+ Add another emulator" at Play: one more Switch 2 build, kept with the ones added in Settings
+handle('sw2:addBuild', async ({ exe } = {}) => {
+  if (typeof exe !== 'string' || !exe || exe.length > 1024 || !paths.isFile(exe)) throw new Error('That file was not found.');
+  if (process.platform === 'win32' && !/\.exe$/i.test(exe)) throw new Error('Choose the emulator\'s program (.exe).');
+  const low = p => path.resolve(p).toLowerCase(), s = { ...(cfg.systems.sw2 || {}) };
+  s.buildHidden = sw2Added('buildHidden').filter(x => low(x) !== low(exe));
+  const added = sw2Added('buildExes'); if (!added.some(x => low(x) === low(exe))) s.buildExes = [...added, exe].slice(0, 20);
+  cfg = persistCfg(config.normalize({ ...cfg, systems: { ...cfg.systems, sw2: s } }));
+  return { ok: true };
+});
 handle('sw2:builds', async ({ file }) => {
   const list = await sw2BuildList(file), id = 'sw2:' + file, low = p => path.resolve(p || '.').toLowerCase();
   const nup = /\.nup$/i.test(String(file || '')), ok = b => !nup || b.nup;
@@ -1415,6 +1428,9 @@ handle('launch:game', async ({ systemId, file, emulator }) => {
 });
 // (beta.6) RetroArch's cores: <its folder>\cores\<core>_libretro.dll, or the folder its own settings name
 // (retroarch.cfg's libretro_directory; ":" there means RetroArch's own folder)
+// (beta.11) the standalone emulators a retro shelf can use, by program name, and the options each one takes (DeSmuME and
+// VisualBoyAdvance-M have no reliable fullscreen option: they open the game in their own window, fullscreen per their settings)
+const ALT_ARGS = [[/desmume/i, '"{rom}"'], [/visualboyadvance|vbam/i, '"{rom}"'], [/mgba/i, '-f "{rom}"'], [/melonds/i, '-f "{rom}"'], [/duckstation/i, '-fullscreen -batch -nogui -- "{rom}"']];
 const RA_CORE_NAME = { swanstation: 'SwanStation', mesen: 'Mesen', snes9x: 'Snes9x', mupen64plus_next: 'Mupen64Plus-Next', gambatte: 'Gambatte', mgba: 'mGBA', melondsds: 'melonDS DS', genesis_plus_gx: 'Genesis Plus GX', flycast: 'Flycast',
   mednafen_saturn: 'Beetle Saturn', mednafen_pce_fast: 'Beetle PCE Fast', fbneo: 'FinalBurn Neo', picodrive: 'PicoDrive', stella: 'Stella', handy: 'Handy', mednafen_wswan: 'Beetle Cygne', dosbox_pure: 'DOSBox Pure' };
 function retroCore(exe, core) {
@@ -1456,6 +1472,12 @@ async function launchGameNow(systemId, file, sc) {
   // (beta.8) Switch through Ryujinx (EmuDeck's usual pick): its own options, not Eden's / Citron's "-f -g" (an edited
   // command line is left as it is)
   if (systemId === 'sw' && /ryujinx|ryubing/i.test(path.basename(sc.emulator || '')) && /^\s*-f\s+-g\s+"\{rom\}"\s*$/.test(sc.gameArgs || '')) { sc = { ...sc, gameArgs: '--fullscreen "{rom}"' }; log('Switch launch: Ryujinx options'); }
+  // (beta.11) a retro shelf started in another standalone emulator than the one its options are for (DeSmuME on the DS
+  // shelf was handed melonDS's -f, which it refuses; mGBA or VisualBoyAdvance-M on a Game Boy shelf): that emulator's own
+  // options, as long as the shelf's options are still the default ones (an edited command line is left as it is)
+  { const def0 = CONSOLES.find(c => c.id === systemId), b = path.basename(sc.emulator || '');
+    if (def0 && def0.retro && !/retroarch/i.test(b) && (!sc.gameArgs || sc.gameArgs === def0.gameArgs)) { const alt = ALT_ARGS.find(([re]) => re.test(b));
+      if (alt && alt[1] !== sc.gameArgs) { sc = { ...sc, gameArgs: alt[1] }; log('Launch options for', b); } } }
   // (beta.6) RetroArch: this console's core from RetroArch's cores folder, fullscreen; a core that isn't downloaded yet is
   // said plainly (RetroArch itself would just open its menu)
   { const def = CONSOLES.find(c => c.id === systemId);
@@ -1600,7 +1622,9 @@ handle('archive:search', ({ text, kind, page, plain }) => archive.search(text, k
 handle('archive:check', ({ ids }) => archive.check(ids));
 handle('archive:download', async ({ id, kind, title, series }) => {
   const k = kind === 'guide' ? 'guide' : 'magazine';
-  const r = await archive.download(id, k, { title: typeof title === 'string' ? title : '', series: typeof series === 'string' ? series : '' }, (n, t, unit) => { if (alive()) win.webContents.send('archive:progress', { id, bytes: n, total: t, unit: unit || 'bytes' }); });
+  // (beta.11) progress at most five times a second (it was every network chunk: ~1,000 messages per 50 MB), the last always
+  let at = 0, tail = null; const send = (n, t, unit) => { if (alive()) win.webContents.send('archive:progress', { id, bytes: n, total: t, unit: unit || 'bytes' }); };
+  const r = await archive.download(id, k, { title: typeof title === 'string' ? title : '', series: typeof series === 'string' ? series : '' }, (n, t, unit) => { const now = Date.now(); clearTimeout(tail); if (now - at >= 200 || (t && n >= t)) { at = now; send(n, t, unit); } else tail = setTimeout(() => { at = Date.now(); send(n, t, unit); }, 200); }).finally(() => clearTimeout(tail));
   return { existed: r.existed, name: path.basename(r.file), count: r.count || 0 };
 });
 handle('archive:cancel', ({ id }) => archive.cancel(String(id || ''))); // the download rejects with "Cancelled." and removes its half file
@@ -1847,16 +1871,48 @@ handle('preview:find', async ({ systemId, file, title, id, youtube }) => {
   }
   const m = /^steam-(\d+)$/.exec(String(id || ''));
   if (m) { const f = await previews.steamClip(m[1]); if (f) return { type: 'file', url: fileUrl(f), steam: true }; }
-  const yid = youtube ? previews.youtubeId(youtube) : null;
+  let yid = youtube ? previews.youtubeId(youtube) : null;
+  // (beta.11) a console game whose LaunchBox trailer is gone (private, removed) or that has none: YouTube is searched for
+  // its trailer (ytclips.search, remembered per game) and that one is clipped. Asked once; the renderer is told either way
+  // (preview:clip with url, or none: it used to wait 45 s for a clip that was never coming)
+  const def0 = systemId ? CONSOLES.find(c => c.id === systemId) : null, sysName = def0 ? def0.name : '';
+  const clipsOn = cfg.ui.previewClips !== false && ytclips.supported() && ytclips.helperState().have;
+  const tell = (pid, c, dead) => { if (alive()) win.webContents.send('preview:clip', c ? { id: pid, url: fileUrl(c) } : { id: pid, none: true, gone: !!dead }); };
+  if (clipsOn && def0 && title && (!yid || ytclips.gone(yid))) {
+    const known = ytclips.searchKnown(title, systemId);
+    if (known) yid = known;
+    else if (known === null) return null; // (searched before: nothing that fits)
+    else { const pid = yid || 's' + crypto.createHash('sha1').update(systemId + '|' + title).digest('hex').slice(0, 11);
+      ytclips.clipFromSearch(title, systemId, sysName).then(x => tell(pid, x && x.file), () => tell(pid, null)); return { type: 'pending', id: pid }; }
+  }
   // (beta.8) console trailers: the clip if it's kept; else it's made in the background and the renderer is told when
   // it's ready (preview:clip), while YouTube's player covers the Media tab in the meantime
   if (yid && cfg.ui.previewClips !== false && ytclips.supported()) {
     const f = ytclips.cached(yid); if (f) return { type: 'file', url: fileUrl(f), yt: yid };
-    if (ytclips.helperState().have) { ytclips.clip(yid).then(c => { if (c && alive()) win.webContents.send('preview:clip', { id: yid, url: fileUrl(c) }); }); if (cfg.ui.previewYoutube !== false) r = { type: 'youtube', id: yid, pending: true }; else r = { type: 'pending', id: yid }; return r; }
+    // (beta.11) a link that turns out to be gone: the search instead; nothing at all: the renderer is told (none)
+    if (ytclips.helperState().have) { const vid = yid; ytclips.clip(vid).then(async c => { if (!c && ytclips.gone(vid) && def0 && title) { const x = await ytclips.clipFromSearch(title, systemId, sysName); c = x ? x.file : null; } tell(vid, c, !c && ytclips.gone(vid)); }).catch(() => tell(vid, null)); if (cfg.ui.previewYoutube !== false) r = { type: 'youtube', id: yid, pending: true }; else r = { type: 'pending', id: yid }; return r; }
   }
   if (cfg.ui.previewYoutube !== false && yid) r = { type: 'youtube', id: yid };
   return r;
 });
+// (beta.11) the games either side of the one you're resting on: their trailers made ahead, so they play at once when you
+// get there. Nothing is told or played; YouTube clips wait behind every clip asked for now (ytclips' low asks), and a
+// Steam trailer is fetched as when Details asks. At most three games per call
+handle('preview:warm', list => {
+  if ((cfg.ui.previews || 'off') === 'off' || !Array.isArray(list)) return false;
+  for (const o of list.slice(0, 3)) previewWarm(o || {}).catch(() => {});
+  return true;
+});
+async function previewWarm({ systemId, file, title, id, youtube }) {
+  if (systemId && file) { const def = CONSOLES.find(c => c.id === systemId), { sc } = gameFile(systemId, file);
+    if (!def || previews.findFile(def, sc, { file, title }, previewOpts(sc))) return; }
+  const m = /^steam-(\d+)$/.exec(String(id || '')); if (m) { await previews.steamClip(m[1]); return; }
+  const def0 = systemId ? CONSOLES.find(c => c.id === systemId) : null;
+  if (!def0 || cfg.ui.previewClips === false || !ytclips.supported() || !ytclips.helperState().have) return;
+  let yid = youtube ? previews.youtubeId(youtube) : null;
+  if (yid && !ytclips.gone(yid)) { if (ytclips.cached(yid)) return; if (await ytclips.clip(yid, { low: true }) || !ytclips.gone(yid)) return; }
+  if (title) await ytclips.clipFromSearch(title, systemId, def0.name, { low: true });
+}
 // (beta.8) console trailers: the helper, how many clips are kept, clearing them
 handle('ytclip:status', () => ytclips.status());
 handle('ytclip:helper', async () => { const ok = await ytclips.getHelper(p => { if (alive()) win.webContents.send('ytclip:progress', { pct: p }); }); if (alive()) win.webContents.send('ytclip:progress', { done: true, ok }); return ok; });
