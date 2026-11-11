@@ -25,6 +25,7 @@ contextBridge.exposeInMainWorld('boxshelf', {
   uiBusy: () => ipcRenderer.send('ui:busy'),
   saveConfig: cfg => call('config:save', cfg),
   detect: () => call('detect'),
+  scanEmulatorFolder: root => call('detect:emusIn', { root: String(root || '') }), scanRomFolder: root => call('detect:romsIn', { root: String(root || '') }),
   scan: () => call('library:scan'),
   scanIfChanged: () => call('library:scan', { ifChanged: true }),
   cachedLibrary: () => call('library:cached'),

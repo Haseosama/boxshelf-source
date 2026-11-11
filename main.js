@@ -911,6 +911,8 @@ function applyCfg(next) { const prev = cfg, hadMenu = cfg.ui.homeMenu !== false;
   try { seamless.applied(prev.ui, cfg.ui, alive() && !launcher.isRunning() ? win : null); } catch {} // (beta.12: Seamless play turned off: the screen as before)
   return cfg; }
 handle('detect', () => detectAll());
+handle('detect:emusIn', ({ root }) => require('./main/detect').scanEmulatorFolder(root));
+handle('detect:romsIn', ({ root }) => require('./main/detect').scanRomFolder(root));
 // The last scan is kept on disk so the next launch can show the shelves immediately (as console UIs do) while a fresh
 // scan runs behind them; the renderer only rebuilds if something actually changed.
 // Wii U e-manuals start on their contents page: the box front goes first, so the booklet opens on a cover like a printed one

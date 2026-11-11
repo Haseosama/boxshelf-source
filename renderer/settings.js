@@ -160,6 +160,9 @@ function build(){
     {t:"consoles",label:"Consoles",info:""},
     H("For every console"),
     A("Find emulators again",()=>detecting?"Searching…":"Search","Looks in the usual install places and your Boxshelf folder for emulators and games folders you haven't set up yet, and fills in any console that has nothing set.",runDetect,{keys:"detect scan auto find"}),
+    /* (fr) scan a folder you choose: emulators (e.g. RetroBat's emulators folder) and games (ROMs) */
+    A("Scan an emulators folder","Choose folder…","Pick a folder that holds your emulators (like RetroBat's emulators folder). Boxshelf looks inside it for every emulator it knows and fills in the consoles that have none yet.",()=>runFolderScan("emus"),{keys:"scan emulators folder retrobat dossier emulateurs choisir"}),
+    A("Scan a ROMs folder","Choose folder…","Pick the folder that holds your games, with one subfolder per console (like RetroBat's roms folder: gc, wii, ps2, psx…). Each console's subfolder is added as its games folder.",()=>runFolderScan("roms"),{keys:"scan roms games folder retrobat dossier jeux choisir"}),
     // (beta.12, Windows) RocketLauncher, HyperSpin's launcher (docs/ROCKETLAUNCHER-PLAN.md): found, then on for every console or
     // the consoles chosen on their own pages, and the front end it's told
     A("RocketLauncher",()=>RL.busy?"…":cfg.rocket&&cfg.rocket.exe?"Found":"Find","Starts your games through RocketLauncher, the launcher HyperSpin uses: its fade screens, bezels, pause menu and the emulator you picked in RocketLauncherUI. Boxshelf waits while you play, counts the time and comes back when RocketLauncher closes. Off unless you turn it on below; your emulators stay set up.",rlFind,
@@ -257,6 +260,8 @@ function build(){
   ]},
   {g:"Boxshelf",id:"shelf",name:"Shelf",ic:"shelf",lead:"How the shelf behaves: console order, shuffle and the idle show.",rows:[
     A("Console order","Reorder","The order of the consoles along the top. Home always comes first.",()=>openSub({kind:"order"}),{keys:"shelf order arrange tabs move"}),
+    /* (fr) interface language: auto / Français / English, applied by reloading the page (i18n.js) */
+    A("Language",({auto:"Auto",fr:"Français",en:"English"})[(window.BS_LANG_PREF?BS_LANG_PREF():"auto")]||"Auto","Choose the language of the interface. Boxshelf restarts its page to apply it.",()=>{const o=["auto","fr","en"],c=window.BS_LANG_PREF?BS_LANG_PREF():"auto";if(window.BS_setLang)BS_setLang(o[(o.indexOf(c)+1)%o.length])},{keys:"language langue french francais english anglais traduction translate"}),
     /* (beta.11, Windows and Linux) the first-run tour again (tour.js): Settings closes, then it starts on the shelf */
     ...(window.bsPlatform&&bsPlatform.os==="android"?[]:[A("Show the tour","Start","A one-minute look at the basics: consoles, Details, Inspect, the quick menu, the Art Studio and where to add games.",()=>{Promise.resolve(close()).then(()=>setTimeout(()=>{if(window.BS_TOUR)BS_TOUR.start()},450))},{keys:"tour tutorial intro help guide basics how learn"})]),
     // (beta.7) your own shelves (Details → Collections adds games to them): renamed and deleted here
@@ -1029,6 +1034,23 @@ async function runDetect(){if(detecting||!api.detect)return;detecting=true;bump(
     if(cfg.steam&&!cfg.steam.path&&det.steam&&det.steam.path){cfg.steam.path=det.steam.path;n++}
     for(const[id,a]of Object.entries(det.apps||{}))if(cfg.apps&&cfg.apps[id]&&!cfg.apps[id].path&&a.path){cfg.apps[id].path=a.path;n++}
     toast(n?`Found ${n} new thing${n===1?"":"s"} and filled them in`:"Nothing new found");if(n)changed({rescan:true})}
+  catch(e){toast(errMsg(e))}detecting=false;bump()}
+// (fr) Scan d'un dossier choisi: "emus" remplit l'émulateur des consoles qui n'en ont pas, "roms" ajoute les dossiers de jeux trouvés
+async function runFolderScan(kindOf){
+  if(detecting)return;
+  const isEmu=kindOf==="emus",fn=isEmu?api.scanEmulatorFolder:api.scanRomFolder;if(!fn){toast("Not available here");return}
+  const p=await pick({kind:"folder",title:isEmu?"Choose the folder with your emulators (like RetroBat's emulators folder)":"Choose the folder with your games (like RetroBat's roms folder)"}),root=typeof p==="string"?p:p&&p.path;if(!root)return;
+  detecting=true;bump();const my=openId;
+  try{const r=await fn(root);
+    if(my!==openId||!isOpen){detecting=false;return}
+    if(r&&r.error){toast(r.error);detecting=false;bump();return}
+    let added=0,kept=0;
+    for(const[id,v]of Object.entries((r&&r.systems)||{})){const c=cfg.systems&&cfg.systems[id];if(!c)continue;
+      if(isEmu){if(!c.emulator){c.emulator=v;added++}else if(c.emulator!==v)kept++}
+      else{c.romDirs=c.romDirs||[];for(const d of v)if(!c.romDirs.some(x=>String(x).toLowerCase()===String(d).toLowerCase())){c.romDirs.push(d);added++}}}
+    const found=(r&&r.count)||0;
+    toast(added?(isEmu?`Found ${added} emulator${added===1?"":"s"} and filled them in`+(kept?` · ${kept} already set kept`:""):`Added ${added} games folder${added===1?"":"s"}`):found?(isEmu?"Everything found was already set":"Those folders were already added"):(isEmu?"No known emulator found in that folder":"No console folder found in there"));
+    if(added)changed({rescan:true})}
   catch(e){toast(errMsg(e))}detecting=false;bump()}
 async function loadStatus(){if(!api.apiStatus)return;try{const s=await api.apiStatus();if(s&&typeof s==="object")status=s}catch{}if(isOpen)bump()}
 async function testSvc(s){await save();svcBusy[s]=true;bump();

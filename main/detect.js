@@ -16,7 +16,7 @@ function kind(full, ent) {
   if (LINKS && ent.isSymbolicLink()) { try { const s = require('fs').statSync(full); return s.isFile() ? 'file' : s.isDirectory() ? 'dir' : ''; } catch { return ''; } }
   return '';
 }
-function makeIndex() {
+function makeIndex(maxDepth = 2) {
   const cache = new Map();
   return dir => {
     const key = dir.toLowerCase(); let m = cache.get(key); if (m) return m;
@@ -26,7 +26,7 @@ function makeIndex() {
       for (const ent of readDir(d)) {
         const full = path.join(d, ent.name), k0 = kind(full, ent);
         if (k0 === 'file') { const k = ent.name.toLowerCase(); if (!m.has(k)) m.set(k, { full, seq: seq++ }); }
-        else if (k0 === 'dir' && depth < 2 && !ent.name.startsWith('.')) queue.push([full, depth + 1]);
+        else if (k0 === 'dir' && depth < maxDepth && !ent.name.startsWith('.')) queue.push([full, depth + 1]);
       }
     }
     cache.set(key, m); return m;
@@ -126,4 +126,41 @@ async function detectAll() {
 // one console's emulator and games folders (a console added in an update, found once as setup would have)
 function detectSystem(id) { const s = CONSOLES.find(c => c.id === id); return s ? { emulator: findExe(s.emulatorFolders, s.exeNames), romDirs: findRomDirs(s) } : null; }
 
-module.exports = { detectAll, detectSystem, findSteam };
+// (fr) Scan d'un dossier choisi par l'utilisateur (ex. retrobat\emulators): chaque console y cherche son émulateur, jusqu'à 4
+// niveaux de profondeur. Renvoie { systems: { id: chemin }, count }.
+function scanEmulatorFolder(root) {
+  const dir = expand(String(root || ''));
+  if (!dir || !isDir(dir)) return { error: 'Folder not found', systems: {}, count: 0 };
+  const index = makeIndex(4), systems = {};
+  for (const s of CONSOLES) {
+    const hit = findIn(index, dir, s.exeNames);
+    if (hit) systems[s.id] = hit;
+  }
+  return { systems, count: Object.keys(systems).length, root: dir };
+}
+
+// (fr) Scan d'un dossier de ROMs: les sous-dossiers (jusqu'à 3 niveaux) dont le nom est celui d'une console (gc, wii, ps2,
+// psx, megadrive...) deviennent ses dossiers de jeux. Renvoie { systems: { id: [dossiers] }, count }.
+function scanRomFolder(root) {
+  const dir = expand(String(root || ''));
+  if (!dir || !isDir(dir)) return { error: 'Folder not found', systems: {}, count: 0 };
+  const byName = new Map();
+  for (const s of CONSOLES) for (const n of (s.romFolderNames || [])) { const k = n.toLowerCase(); if (!byName.has(k)) byName.set(k, []); byName.get(k).push(s.id); }
+  const systems = {}, queue = [[dir, 0]];
+  const add = (id, d) => { (systems[id] = systems[id] || []); if (!systems[id].includes(d)) systems[id].push(d); };
+  while (queue.length) {
+    const [d, depth] = queue.shift();
+    for (const ent of readDir(d)) {
+      if (ent.name.startsWith('.')) continue;
+      const full = path.join(d, ent.name);
+      if (kind(full, ent) !== 'dir') continue;
+      const ids = byName.get(ent.name.toLowerCase());
+      if (ids) { for (const id of ids) add(id, full); continue; } // un dossier de console: on ne descend pas dedans
+      if (depth < 2) queue.push([full, depth + 1]);
+    }
+  }
+  // un nom partagé par plusieurs consoles (ex. "fbneo": arcade) n'est gardé que pour la première
+  return { systems, count: Object.keys(systems).length, root: dir };
+}
+
+module.exports = { detectAll, detectSystem, findSteam, scanEmulatorFolder, scanRomFolder };
