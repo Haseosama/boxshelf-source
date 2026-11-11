@@ -894,7 +894,10 @@ window.Museum = (() => {
   // (46 m, the same colour as the background) and the far plane (90 m) the whole room went black. Both move out with the camera.
   let reachExt = 0;
   function reach() { const ext = Math.round(Math.max(0, camera.position.z - 30) / 2) * 2; if (ext === reachExt) return; reachExt = ext; if (scene.fog) { scene.fog.near = 16 + ext; scene.fog.far = 46 + ext; } camera.far = 90 + ext * 1.5; camera.updateProjectionMatrix(); }
-  const overview = () => { const l = wallL(), r = wallR(), lo = tvOn && room.tvStand !== 'wall' ? .55 : 0; return { x: (l + r) / 2, y: -(rows.length - 1) * ROW / 2 + .15 - lo, z: fitZ(r - l + .6, wallH + 1.1 + lo * 2) + .25 }; }; // with the TV: a little more floor in view
+  // (fr) the overview shows at most this much of a shelf (the start of it): a shelf of thousands of games is far wider than any
+  // screen, and fitting all of it left the cases smaller than a pixel (a black room); the selection scrolls along it as usual
+  const OV_MAX = 18;
+  const overview = () => { const l = wallL(), r = wallR(), lo = tvOn && room.tvStand !== 'wall' ? .55 : 0; const fw = Math.min(r - l, OV_MAX); return { x: l + fw / 2, y: -(rows.length - 1) * ROW / 2 + .15 - lo, z: fitZ(fw + .6, wallH + 1.1 + lo * 2) + .25 }; }; // with the TV: a little more floor in view
   let roomView = false, snapCam = false;
   // the wide view: the stick moves a soft gold frame between the shelves and the racks; A zooms in on the one it's on
   let wideSel = 0, wideFrame = null; // 0..rows-1: a shelf; rows + u: rack unit u
@@ -944,7 +947,7 @@ window.Museum = (() => {
     hooks.onSelect && hooks.onSelect(current());
   }
   function roomOverview() {
-    const l = wallL(), r = wallR(), w = r - l, fov = camera.fov * DEG, asp = innerWidth / innerHeight, side = Math.min(.45, (Math.min(420, innerWidth * .4) + 56) / innerWidth); // the menu's share of the screen
+    const l = wallL(), r0 = wallR(), r = Math.min(r0, l + OV_MAX), w = r - l, fov = camera.fov * DEG, asp = innerWidth / innerHeight, side = Math.min(.45, (Math.min(420, innerWidth * .4) + 56) / innerWidth); // the menu's share of the screen
     const z = Math.max((wallH + 1.5) / 2 / Math.tan(fov / 2), (w + .8) / 2 / Math.tan(fov / 2) / (asp * (1 - side))) + .35;
     const visW = 2 * z * Math.tan(fov / 2) * asp; return { x: (l + r) / 2 + visW * side / 2, y: -(rows.length - 1) * ROW / 2 + .15, z };
   }

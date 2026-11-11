@@ -3108,9 +3108,16 @@ function musFindScroll(dy){const b=musFind.el&&musFind.el.querySelector(".mf-bod
 function musFindKey(k){const IA=window.BoxshelfIA;if(k==="back"){if(IA&&IA.back&&IA.back()){play_("back");renderMusHints();return}return musFindClose()}
   if(k==="ok"){const a=document.activeElement;if(a&&musFind.el.contains(a)){if(a.tagName==="INPUT"){if(inputMode==="pad"&&IA&&IA.osk){IA.osk();play_("panel");renderMusHints();return}a.blur();return}a.click();if(IA&&IA.typing)setTimeout(renderMusHints,0)}return}musFindStep(k)}
 let Shelf_setMusLight=null;
+// (fr) The museum builds one 3D case per game: a library of tens of thousands (a whole Batocera ROM set) froze it, then showed a black
+// room. Each shelf keeps its favourites, then its most played, then the rest in order, up to a share of a fixed total.
+let musCapped=0;
+function musPick(list,nShelves){const cap=Math.max(60,Math.min(300,Math.floor(6000/Math.max(1,nShelves))));if(list.length<=cap)return list;
+  const sc=(g,i)=>{const h=HIST[g.id];return (isFav(g)?1e9:0)+((h&&h.count)||0)*1e3-i/1e6};
+  const keep=list.map((g,i)=>({g,i,s:sc(g,i)})).sort((x,y)=>y.s-x.s).slice(0,cap).sort((x,y)=>x.i-y.i).map(x=>x.g);musCapped+=list.length-keep.length;return keep}
 function museumData(){
+  musCapped=0;const nSh=allShelves.filter(sh=>(sh.kind==="console"||sh.kind==="steam")&&sh.items.some(isGame)).length;
   return allShelves.filter(sh=>(sh.kind==="console"||sh.kind==="steam")&&sh.items.some(isGame)).map(sh=>({id:sh.id,name:sh.name,style:STYLE[sh.id]||STYLE.media,
-    games:sh.items.filter(isGame).map(g=>{const h=HIST[g.id],i=g.info||{};return {id:g.id,title:g.title,front:()=>{const u=g.art&&g.art.front;if(!u)return Covers.frontAsync(stOf(g),g);return /^bsfile:/.test(u)?u+(u.includes("?")?"&":"?")+"t=768":u} /* generated covers: a Promise, encoded off the main thread */,spine:g.art&&g.art.spine||null,year:yearOf(g)||null,
+    games:musPick(sh.items.filter(isGame),nSh).map(g=>{const h=HIST[g.id],i=g.info||{};return {id:g.id,title:g.title,front:()=>{const u=g.art&&g.art.front;if(!u)return Covers.frontAsync(stOf(g),g);return /^bsfile:/.test(u)?u+(u.includes("?")?"&":"?")+"t=768":u} /* generated covers: a Promise, encoded off the main thread */,spine:g.art&&g.art.spine||null,year:yearOf(g)||null,
       dev:i.dev||null,pub:i.pub||null,genre:genreOf(g),rating:i.rating?+i.rating:null,metacritic:i.metacritic||null,group:groupOf(g),
       hours:h&&h.count?fmtPlay(h.ms)+" played":null,plays:h&&h.count||0,added:g.added||0,manual:!!(g.art&&g.art.manual&&g.art.manual.length),manualPage:g.art&&g.art.manual&&g.art.manual[0]||null,manualPages:g.art&&g.art.manual||[],back:g.art&&g.art.back?(/^bsfile:/.test(g.art.back)?g.art.back+(g.art.back.includes("?")?"&":"?")+"t=1024":g.art.back):null,disc:g.art&&g.art.disc||null,boxFull:!!(g.art&&g.art.front&&g.art.back&&g.art.spine),players:i.players||null,esrb:i.esrb||null,media:(MEDIA[sh.id]||{}).kind||"disc",mediaSize:(MEDIA[sh.id]||{}).size||0,last:h&&h.last?fmtDay(h.last/1000):null,fav:isFav(g),_g:g,_sh:sh}}),
     console:{model:themes[sh.id]&&themes[sh.id].model||BUILTIN_MODEL[sh.id]||null,opts:modelOpts(sh.id),controller:themes[sh.id]&&themes[sh.id].controller||null}}));
@@ -3133,7 +3140,7 @@ function openMuseum(at){uiCrumb("Museum");
   const tok=++musOpenTok,want=at||(cur()&&cur().id);void el.offsetWidth;
   requestAnimationFrame(()=>requestAnimationFrame(()=>{
     if(tok!==musOpenTok||mode!=="museum")return;
-    const data=museumData();
+    const data=museumData();if(musCapped)setTimeout(()=>toast(window.BS_LANG==="fr"?"Le musée affiche une partie de votre collection (favoris et plus joués d’abord) : "+musCapped+" jeux restent sur l’étagère.":"The museum shows part of your collection (favourites and most played first): "+musCapped+" games stay on the shelf."),2500);
     const ri=Math.max(0,data.findIndex(r=>r.id===want));Museum.setRow(ri);museumSelect.first=true;
     Museum.setRoom(musRoomKeys(musStyle())); // the room as you left it, built that way (not rebuilt a moment later)
     const ok=Museum.open(Object.assign(data,{mail:musStyle().mail!==false,owner:RA.on&&RA.profile&&RA.profile.user||"",hist:HIST,favs:(cfgInfo&&cfgInfo.config.ui.favorites)||[],lib:musLib(),tv:musStyle().tv===true,walkIn:musStyle().walkIn!==false&&!reduced()}),{onTvEnded:err=>err?tvFailed():tvNext(1),onTvChannel:d=>tvNext(d),onTvBand:d=>tvBand(d),booklet:mg=>makeBooklet(mg._g),libCover,movieArt:d=>Promise.all([movieDisc(d).catch(()=>null),movieInsert(d).then(u=>u&&u[0]||null).catch(()=>null)]).then(([disc,inside])=>({disc,inside})),libBack:d=>d.kind==="movie"?movieBack(d).catch(()=>null):api.libraryCover(d.id,"back").catch(()=>null),onSelect:museumSelect,okWord:()=>okWord(),onSound:n=>play_(n),log:m=>api.log&&api.log(m),onShown:()=>{if(musBootSplash)musBootSplash();if(mode==="museum")play_("museum")},onReady:ms=>api.log&&api.log("museum open: build+shaders "+Math.round(performance.now()-tOpen)+" ms (shaders "+ms+" ms)")});
