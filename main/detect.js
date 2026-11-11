@@ -113,10 +113,68 @@ async function findSteam() {
   return null;
 }
 
-async function detectAll() {
+// (fr) Disques de la machine (Windows): lettres existantes, pour que l'assistant demande où chercher.
+function listDrives() {
+  if (process.platform !== 'win32') return [];
+  const out = [], sys = String(process.env.SystemDrive || 'C:').replace(':', '').toUpperCase();
+  for (let c = 65; c <= 90; c++) {
+    const l = String.fromCharCode(c);
+    try { require('fs').readdirSync(l + ':\\'); out.push({ letter: l, path: l + ':\\', system: l === sys }); } catch { /* absent ou illisible */ }
+  }
+  return out;
+}
+
+// (fr) Recherche en profondeur sur les disques choisis: émulateurs (par nom de programme) et dossiers de jeux (par nom de
+// console, seulement s'ils sont dans un chemin qui parle de roms / jeux / émulation). Cherche d'abord près de la racine.
+const DRIVE_SKIP = new Set(['windows', '$recycle.bin', 'system volume information', 'node_modules', 'appdata', 'programdata', 'winsxs', 'recovery', 'perflogs', '$windows.~bt', 'msocache', '.git']);
+const ROMISH = ['rom', 'game', 'iso', 'emul', 'retro', 'batocera', 'recalbox', 'jeux'];
+async function scanDrives(drives) {
+  const names = new Map(), pats = [];
+  for (const s of CONSOLES) for (const n of (s.exeNames || [])) {
+    if (n.startsWith('re:')) { try { pats.push([new RegExp(n.slice(3), 'i'), s.id]); } catch { /* ignore */ } }
+    else { const k = n.toLowerCase(); if (!names.has(k)) names.set(k, []); names.get(k).push(s.id); }
+  }
+  const romNames = new Map();
+  for (const s of CONSOLES) for (const n of (s.romFolderNames || [])) { const k = n.toLowerCase(); if (!romNames.has(k)) romNames.set(k, []); romNames.get(k).push(s.id); }
+  const systems = {}, get = id => (systems[id] = systems[id] || { emulator: null, romDirs: [] });
+  let steps = 0;
+  for (const dr of drives || []) {
+    const root = String(dr || '').replace(/[\\/]*$/, '') + '\\';
+    if (!/^[A-Za-z]:\\$/.test(root) || !isDir(root)) continue;
+    const queue = [[root, 0, false]], t0 = Date.now(); let seen = 0;
+    while (queue.length && seen < 400000 && Date.now() - t0 < 180000) {
+      const [d, depth, romish] = queue.shift();
+      seen++;
+      if (++steps % 300 === 0) await new Promise(r => setImmediate(r)); // laisse respirer le programme
+      for (const ent of readDir(d)) {
+        const full = path.join(d, ent.name), low = ent.name.toLowerCase(), k0 = kind(full, ent);
+        if (k0 === 'file') {
+          for (const id of (names.get(low) || [])) { const e = get(id); if (!e.emulator) e.emulator = full; }
+          if (low.endsWith('.exe')) for (const [re, id] of pats) if (re.test(low)) { const e = get(id); if (!e.emulator) e.emulator = full; }
+        } else if (k0 === 'dir' && !DRIVE_SKIP.has(low) && !low.startsWith('$')) {
+          const isRomish = romish || ROMISH.some(w => low.includes(w));
+          const ids = romNames.get(low);
+          if (ids && romish) { for (const id of ids) { const e = get(id); if (!e.romDirs.includes(full)) e.romDirs.push(full); } continue; }
+          if (depth < 5) queue.push([full, depth + 1, isRomish]);
+        }
+      }
+    }
+  }
+  return systems;
+}
+
+async function detectAll(drives) {
   const systems = {}, index = makeIndex();
   for (const s of CONSOLES) {
     systems[s.id] = { emulator: findExe(s.emulatorFolders, s.exeNames, index), romDirs: findRomDirs(s) };
+  }
+  if (Array.isArray(drives) && drives.length) {
+    const extra = await scanDrives(drives);
+    for (const [id, e] of Object.entries(extra)) {
+      const s = systems[id]; if (!s) continue;
+      if (!s.emulator && e.emulator) s.emulator = e.emulator;
+      for (const d of e.romDirs) if (!s.romDirs.some(x => x.toLowerCase() === d.toLowerCase())) s.romDirs.push(d);
+    }
   }
   const apps = {};
   for (const a of APPS) apps[a.id] = { path: findExe(a.folders, a.exeNames, index) };
@@ -163,4 +221,4 @@ function scanRomFolder(root) {
   return { systems, count: Object.keys(systems).length, root: dir };
 }
 
-module.exports = { detectAll, detectSystem, findSteam, scanEmulatorFolder, scanRomFolder };
+module.exports = { detectAll, detectSystem, findSteam, scanEmulatorFolder, scanRomFolder, listDrives };

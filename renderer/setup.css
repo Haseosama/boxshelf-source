@@ -1007,3 +1007,14 @@ body.pad-input #setup.wz-win .wz-key{display:none}
 #setup.wz-win .wz-g{display:inline-grid;place-items:center;flex:none}
 #setup.wz-win .wz-g svg{display:block;width:26px;height:26px}
 #setup.wz-win .wz-kc{display:inline-grid;place-items:center;flex:none;min-width:28px;height:26px;padding:0 8px;border-radius:7px;border:1.5px solid rgba(255,255,255,.55);font-size:12.5px;font-weight:600;line-height:1;color:#fff}
+
+/* (fr) choix des disques à analyser */
+.drv-ov{position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.65)}
+.drv-box{width:min(520px,92vw);max-height:86vh;overflow:auto;padding:24px 26px;border-radius:16px;background:#14162a;color:#fff;box-shadow:0 20px 60px rgba(0,0,0,.6)}
+.drv-box h2{margin:0 0 8px;font-size:1.25em}
+.drv-box p{margin:0 0 14px;opacity:.75;line-height:1.4}
+.drv-list{display:flex;flex-direction:column;gap:6px;margin-bottom:18px}
+.drv-row{display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;background:rgba(255,255,255,.07);cursor:pointer}
+.drv-row input{width:20px;height:20px}
+.drv-tag{margin-left:auto;font-size:.8em;opacity:.6}
+.drv-btns{display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap}

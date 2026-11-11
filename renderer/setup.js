@@ -104,9 +104,36 @@ function changed(){clearTimeout(saveT);saveT=setTimeout(persist,400);renderNav()
 // of starting another alongside
 let detectRun=null;
 function runDetect(applyEmpty){if(detectRun)return detectRun;const p=detectRun=detectNow(applyEmpty);p.finally(()=>{if(detectRun===p)detectRun=null}).catch(()=>{});return p}
+// (fr) Asks which drives to search (Windows): resolves to an array of drive paths (empty = usual places only) or null if cancelled.
+// Also used by Settings → Find emulators again (window.BS_askDrives).
+function askDrives(){
+  return new Promise(async resolve=>{
+    let list=[];try{list=(api.listDrives&&await api.listDrives())||[]}catch{}
+    if(!list.length)return resolve([]);
+    const chosen=new Set(list.filter(d=>!d.system).map(d=>d.path));
+    const done=v=>{ov.remove();document.removeEventListener("keydown",onKey,true);resolve(v)};
+    const onKey=e=>{if(e.key==="Escape"){e.stopPropagation();done(null)}};
+    const rows=list.map(d=>{const cb=el("input",{type:"checkbox"});cb.checked=chosen.has(d.path);cb.addEventListener("change",()=>{cb.checked?chosen.add(d.path):chosen.delete(d.path)});
+      return el("label",{class:"drv-row"},cb,el("span",{class:"drv-name",text:`Drive ${d.letter}:`}),d.system?el("span",{class:"drv-tag",text:"System drive"}):null)});
+    const ov=el("div",{class:"drv-ov",role:"dialog","aria-modal":"true"},
+      el("div",{class:"drv-box"},
+        el("h2",{text:"Which drives should Boxshelf search?"}),
+        el("p",{text:"Pick the drives to search for emulators and games folders. The usual places (Boxshelf folder, Desktop, Program Files…) are always checked. A big drive can take a few minutes."}),
+        el("div",{class:"drv-list"},...rows),
+        el("div",{class:"drv-btns"},
+          el("button",{type:"button",class:"btn",text:"Cancel",onclick:()=>done(null)}),
+          el("button",{type:"button",class:"btn",text:"Usual places only",onclick:()=>done([])}),
+          el("button",{type:"button",class:"btn primary",text:"Search these drives",onclick:()=>done([...chosen])}))));
+    document.addEventListener("keydown",onKey,true);document.body.appendChild(ov);
+    const first=ov.querySelector("input");if(first)first.focus();
+  });
+}
+window.BS_askDrives=askDrives;
 async function detectNow(applyEmpty){
+  const drives=await askDrives();
+  if(drives===null)return false; // cancelled: no search
   detecting=true;render();
-  try{det=await api.detect()}catch(e){Shelf.toast(e.message);det=null}
+  try{det=await api.detect(drives)}catch(e){Shelf.toast(e.message);det=null}
   detecting=false;
   if(det&&applyEmpty){
     for(const[id,d]of Object.entries(det.systems)){const c=cfg.systems[id];if(!c)continue;const had=!!(c.emulator||c.romDirs.length);if(!c.emulator&&d.emulator)c.emulator=d.emulator;if(!c.romDirs.length&&d.romDirs.length)c.romDirs=[...d.romDirs];
@@ -282,7 +309,7 @@ function welcome(b){
   if(winWizard())return welcomeWin(b);
   if(onAndroid()){const root=info.appRoot;b.append(el("div",{class:"field"},el("div",{class:"lbl"},"Boxshelf folder"),el("div",{class:"d-cmd",text:root})))}
   b.append(el("div",{class:"d-actions"},
-    el("button",{type:"button",class:"btn primary",onclick:async()=>{if(detecting)return;await runDetect(true);searched=true;pickInit();if(step===0)step=1;render()}} /* (beta.10) only moves on if you're still on Welcome */,detecting?el("span",{class:"scanning"}):null,detecting?" Looking…":winWizard()?"Find my emulators and games":"Find automatically"),
+    el("button",{type:"button",class:"btn primary",onclick:async()=>{if(detecting)return;if(await runDetect(true)===false)return;searched=true;pickInit();if(step===0)step=1;render()}} /* (beta.10) only moves on if you're still on Welcome */,detecting?el("span",{class:"scanning"}):null,detecting?" Looking…":winWizard()?"Find my emulators and games":"Find automatically"),
     el("button",{type:"button",class:"btn",onclick:()=>{pickInit();step=1;render()}},winWizard()?"I'll pick them myself":"Set up by hand")));
 }
 // (beta.11) the Windows welcome: the same two choices (same actions) as Settings rows, with the info card beside them
@@ -290,7 +317,7 @@ function welcomeWin(b){
   b.append(el("div",{class:"wz-rows"},
     wzRow({icon:"search",busy:detecting,title:"Find my emulators and games",chip:"Recommended",info:"find",attrs:{"data-choice":"find"},
       desc:detecting?"Looking…":"Searches this PC, then shows the consoles it found, already ticked.",
-      onclick:async()=>{if(detecting)return;await runDetect(true);searched=true;pickInit();if(step===0)step=1;render()}}), /* (beta.10) only moves on if you're still on Welcome */
+      onclick:async()=>{if(detecting)return;if(await runDetect(true)===false)return;searched=true;pickInit();if(step===0)step=1;render()}}), /* (beta.10) only moves on if you're still on Welcome */
     wzRow({icon:"list",title:"I'll pick them myself",info:"self",attrs:{"data-choice":"self"},desc:"Tick the consoles you play, then point to each one's emulator and games folder.",
       onclick:()=>{pickInit();step=1;render()}})));
   wzInfo={fn:welcomeInfo,def:"find"};

@@ -910,7 +910,8 @@ function applyCfg(next) { const prev = cfg, hadMenu = cfg.ui.homeMenu !== false;
   try { cfgChanged(prev, cfg); } catch (e) { log('settings change', e.message); }
   try { seamless.applied(prev.ui, cfg.ui, alive() && !launcher.isRunning() ? win : null); } catch {} // (beta.12: Seamless play turned off: the screen as before)
   return cfg; }
-handle('detect', () => detectAll());
+handle('detect', (a) => detectAll(a && Array.isArray(a.drives) ? a.drives.map(String).slice(0, 26) : undefined));
+handle('drives:list', () => require('./main/detect').listDrives());
 handle('detect:emusIn', ({ root }) => require('./main/detect').scanEmulatorFolder(root));
 handle('detect:romsIn', ({ root }) => require('./main/detect').scanRomFolder(root));
 // The last scan is kept on disk so the next launch can show the shelves immediately (as console UIs do) while a fresh

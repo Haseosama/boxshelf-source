@@ -1026,7 +1026,8 @@ let sndT=0;function soundSoon(k){clearTimeout(sndT);sndT=setTimeout(()=>shelf("s
 
 /* ---------- async bits: detection, services, system actions ---------- */
 async function runDetect(){if(detecting||!api.detect)return;detecting=true;bump();const my=openId;
-  try{const d0=await api.detect();
+  try{const drives=window.BS_askDrives?await window.BS_askDrives():[];if(drives===null){detecting=false;bump();return}
+    const d0=await api.detect(drives);
     // Settings closed (or reopened) while it searched: its config was already saved, so filling it in now would save a stale copy over newer changes
     if(my!==openId||!isOpen){detecting=false;return}
     det=d0;let n=0;
