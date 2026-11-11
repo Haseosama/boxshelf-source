@@ -80,7 +80,7 @@ window.Museum = (() => {
     renderer.shadowMap.enabled = wantShadows(); renderer.shadowMap.type = THREE.PCFShadowMap; renderer.shadowMap.autoUpdate = false;
     scene = new THREE.Scene(); scene.background = new THREE.Color(0x05060a); scene.fog = new THREE.Fog(0x05060a, 16, 46);
     scene.environmentIntensity = .22; // the reflections (makeEnv) are made in their own step
-    camera = new THREE.PerspectiveCamera(36, 1, .05, 90);
+    camera = new THREE.PerspectiveCamera(36, 1, .05, 90); reachExt = 0;
     ambL = new THREE.AmbientLight(0xaab0c8, .12); scene.add(ambL);
     moonL = new THREE.DirectionalLight(0x9fb0ff, .25); moonL.position.set(-6, 6, 8); scene.add(moonL);
     // movie-set lighting on top of the lamps: two rim lights that catch shelf edges and case corners from either side (cool
@@ -890,6 +890,10 @@ window.Museum = (() => {
   const rowView = () => { const r = rows[rowI], sel = r.boxes[colI] || null, ri = sel ? null : rackItem(); const cx = sel ? sel.userData.home.x : ri ? ri.mesh.userData.home.x + .2 : r.consoleX; if (fan && fan.it.ri === rowI && !(libHeld && libHeld.temp)) { const h0 = fan.it.mesh.userData.home; return { x: h0.x, y: r.y + .2, z: h0.z + 1.55 + 2.85 }; } if (libHeld && libHeld.ri === rowI) { const h0 = libHeld.mesh.userData.home; return { x: h0.x + hPan.x, y: r.y + .22 + hPan.y, z: h0.z + 1.7 + 2.05 / handZoom }; } if (heldCase) { const k = peek && peek.box === heldCase ? ss(peek.k) : 0, wp = heldCase.getWorldPosition(sv('rowWp')); return { x: wp.x - r.w * .5 * k / handZoom + hPan.x, y: wp.y + hPan.y, z: wp.z + (2.35 + .3 * k) / handZoom }; } /* far enough back to see the whole case (and both halves once open) */ /* open: both halves in view */ return holding ? { x: cx, y: r.y + .42, z: 3.0 } : { x: cx - .2, y: r.y + .02, z: 3.7 }; };
   // the whole wall (bookcase and reading corner), snug; with the Room menu open, framed in the space left of the menu
   const wallL = () => -.55 - (tvSide() === 'left' ? tvDims().W + .95 : 0), wallR = () => Math.max(wallW, roomObj && roomObj.rackEnd || 0) + (tvSide() === 'right' ? tvDims().W + .95 : .55);
+  // (fr) A shelf with hundreds of games is tens of metres wide, so the overview camera stands far back: past the fog's end
+  // (46 m, the same colour as the background) and the far plane (90 m) the whole room went black. Both move out with the camera.
+  let reachExt = 0;
+  function reach() { const ext = Math.round(Math.max(0, camera.position.z - 30) / 2) * 2; if (ext === reachExt) return; reachExt = ext; if (scene.fog) { scene.fog.near = 16 + ext; scene.fog.far = 46 + ext; } camera.far = 90 + ext * 1.5; camera.updateProjectionMatrix(); }
   const overview = () => { const l = wallL(), r = wallR(), lo = tvOn && room.tvStand !== 'wall' ? .55 : 0; return { x: (l + r) / 2, y: -(rows.length - 1) * ROW / 2 + .15 - lo, z: fitZ(r - l + .6, wallH + 1.1 + lo * 2) + .25 }; }; // with the TV: a little more floor in view
   let roomView = false, snapCam = false;
   // the wide view: the stick moves a soft gold frame between the shelves and the racks; A zooms in on the one it's on
@@ -1977,7 +1981,7 @@ window.Museum = (() => {
       const waited = now - prep.t0;
       if (waited < 640) { doWork(8); return; }
       doWork(10); uploadSome(10); if (shadowRow !== rowI) setShadowRow();
-      if (!prep.drawn || upQ.length || !prepReady()) { renderer.shadowMap.needsUpdate = !prep.drawn; try { camera.position.set(camP.x, camP.y, camP.z); camera.lookAt(camP.x, camP.y - .05, 0); drawFrame(); prep.drawn = true; } catch {} } // the opening view: the whole wall, so everything gets drawn (and uploaded) once
+      if (!prep.drawn || upQ.length || !prepReady()) { renderer.shadowMap.needsUpdate = !prep.drawn; try { camera.position.set(camP.x, camP.y, camP.z); reach(); camera.lookAt(camP.x, camP.y - .05, 0); drawFrame(); prep.drawn = true; } catch {} } // the opening view: the whole wall, so everything gets drawn (and uploaded) once
       if ((prepReady() && prep.drawn && waited > 700) || waited > 1900) { if (hooks.log) hooks.log(`museum: ready to show after ${Math.round(waited)} ms of preparation${waited > 1900 ? ' (timed out)' : ''}`); prep = null; unprime(); canvas.classList.add('on'); lastT = 0; hooks.onShown && hooks.onShown(); }
       return;
     }
@@ -2162,7 +2166,7 @@ window.Museum = (() => {
     const dx = driftK * Math.sin(now / 4200) * .18, dy = driftK * Math.sin(now / 5600) * .06, dz = driftK * Math.sin(now / 7000) * .25;
     // a case in your hands: the camera faces it straight on, at eye level, wherever it is (the shelf view looks down at the wall)
     holdLook = sm(holdLook, heldCase ? 1 : 0, 1 - Math.exp(-dt * 4));
-    camera.position.set(camP.x + dx * (1 - holdLook), camP.y + .2 * (1 - holdLook) + dy * (1 - holdLook), camP.z + dz * (1 - holdLook));
+    camera.position.set(camP.x + dx * (1 - holdLook), camP.y + .2 * (1 - holdLook) + dy * (1 - holdLook), camP.z + dz * (1 - holdLook)); reach();
     camera.lookAt(camP.x + dx * .4 * (1 - holdLook), (camP.y - .05) * (1 - holdLook) + camP.y * holdLook, holdLook > 0.001 ? camP.z - 4 * holdLook - (1 - holdLook) * camP.z : 0);
     if (delivery) stepDelivery(dt, now);
     if (tv) stepTV(dt, now);
