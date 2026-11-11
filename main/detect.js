@@ -141,9 +141,9 @@ async function scanDrives(drives) {
   for (const dr of drives || []) {
     const root = String(dr || '').replace(/[\\/]*$/, '') + '\\';
     if (!/^[A-Za-z]:\\$/.test(root) || !isDir(root)) continue;
-    const queue = [[root, 0, false]], t0 = Date.now(); let seen = 0;
-    while (queue.length && seen < 400000 && Date.now() - t0 < 180000) {
-      const [d, depth, romish] = queue.shift();
+    const queue = [[root, 0, false]], t0 = Date.now(); let seen = 0, head = 0; // (head: évite Array.shift, lent sur de gros disques)
+    while (head < queue.length && seen < 400000 && Date.now() - t0 < 180000) {
+      const [d, depth, romish] = queue[head]; queue[head++] = null;
       seen++;
       if (++steps % 300 === 0) await new Promise(r => setImmediate(r)); // laisse respirer le programme
       for (const ent of readDir(d)) {
@@ -217,7 +217,6 @@ function scanRomFolder(root) {
       if (depth < 2) queue.push([full, depth + 1]);
     }
   }
-  // un nom partagé par plusieurs consoles (ex. "fbneo": arcade) n'est gardé que pour la première
   return { systems, count: Object.keys(systems).length, root: dir };
 }
 

@@ -986,6 +986,15 @@ window.Museum = (() => {
   }
   // the TV's materials, drawn tiny and unseen with the preparation whether the TV is on or not, so switching it on (or to a
   // video) mid-visit never compiles a shader; put away again by unprime()
+  // (fr) Compile the scene's shaders for the first frames without walking every case: renderer.compile() visits every material
+  // in the scene (even hidden ones), and a library of thousands of games has two per case: it froze the screen for seconds.
+  // All the cases share a handful of shader programs, so the first few of each shelf stand in for them; the rest are put
+  // back right after, and join in (already-built programs, a cache hit) when they come into view.
+  function compileLean() {
+    const parked = []; rows.forEach(rw => rw.boxes.forEach((b, i) => { if (i >= 3 && b.parent) parked.push([b.parent, b]); }));
+    parked.forEach(([p, b]) => p.remove(b));
+    try { renderer.compile(scene, camera); } finally { parked.forEach(([p, b]) => p.add(b)); }
+  }
   function primeTv(r0) { const THREE = T(), M = tvMats(); ['plastic', 'dark', 'metal', 'pale', 'led', 'clock', 'screen', 'screenV', 'shade', 'glow'].forEach(k => {
     const g = new THREE.PlaneGeometry(.004, .004); if (k === 'led') g.setAttribute('color', new THREE.Float32BufferAttribute(new Float32Array(12).fill(1), 3)); const m = new THREE.Mesh(g, M[k]); m.position.set(wallW / 2, r0 ? r0.y : 0, DEPTH / 2 + .3); m.renderOrder = 4; scene.add(m); primeKeep.push(m); }); }
   function open(data, h) {
@@ -1035,7 +1044,7 @@ window.Museum = (() => {
       const dm = fillify(new THREE.MeshStandardMaterial({ map: dummyTex, roughness: .42 }), { value: 0 }), dmesh = new THREE.Mesh(new THREE.BoxGeometry(.01, .01, .01), [dm, dm, dm, dm, dm, dm]); dmesh.castShadow = true; dmesh.position.y = -50; scene.add(dmesh);
       const smesh = new THREE.Mesh(new THREE.PlaneGeometry(.01, .01), shimMat()), r0 = rows[rowI]; smesh.renderOrder = 4; smesh.position.set(wallW / 2, r0 ? r0.y : 0, DEPTH / 2 + .3); scene.add(smesh); primeKeep = [smesh]; // the sealed-case glint too (its material is kept, so it stays compiled)
       let pm = null; if (mailSet && mailSet.size) { if (!sparkM) sparkM = new THREE.PointsMaterial({ size: .03, vertexColors: true, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false }); const pg = new THREE.BufferGeometry(); pg.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0], 3)); pg.setAttribute('color', new THREE.Float32BufferAttribute([1, 1, 1], 3)); pm = new THREE.Points(pg, sparkM); pm.position.y = -50; scene.add(pm); } // mail waiting: the unboxing sparkle too
-      if (rows.length) { const f = wideFrameMesh(); f.visible = true; primeKeep.push(f); } primeTv(r0); renderer.compile(scene, camera); scene.remove(dmesh); if (pm) { scene.remove(pm); pm.geometry.dispose(); } dmesh.geometry.dispose(); dm.dispose(); } catch {}
+      if (rows.length) { const f = wideFrameMesh(); f.visible = true; primeKeep.push(f); } primeTv(r0); compileLean(); scene.remove(dmesh); if (pm) { scene.remove(pm); pm.geometry.dispose(); } dmesh.geometry.dispose(); dm.dispose(); } catch {}
     // then a short, unseen preparation: the shelf in view gets its covers, spines and console models and they go to the
     // graphics card before the walk-in starts, so the camera never moves over half-loaded shelves (at most ~1.4 s)
     prep = { t0: performance.now() };
