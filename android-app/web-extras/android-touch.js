@@ -269,6 +269,26 @@
   // Every finger up: forget any pointer whose pointerup we never saw, so a stale one can't make the next single finger
   // look like a second one (whose pointerdown would then be kept from the app)
   addEventListener('touchend', e => { end(e, false); if (!e.touches.length) down.clear(); }, { capture: true, passive: true });
+
+  // ---------- 5. (beta.12) up and down: Details ----------
+  // A quick swipe up on the shelf opens the game's Details; a quick swipe down on Details (when it's scrolled to its top)
+  // closes it, like a phone's sheet. One finger, mostly vertical, quick (under half a second), and not started on the
+  // hint bar, the console bar or anything that scrolls / drags itself. Nothing is done while the finger moves.
+  let vs = null;
+  addEventListener('touchstart', e => {
+    vs = null; if (e.touches.length !== 1 || pz) return; const f = e.touches[0], t = T(); if (!t || !t.details) return;
+    const scr = t.screen(); if (scr !== 'shelf' && scr !== 'details') return;
+    if (e.target.closest && e.target.closest('.hints,.tabs,#tabs,.hud-top,input,textarea,[data-hswipe],[data-hold]')) return;
+    vs = { id: f.identifier, x: f.clientX, y: f.clientY, t: e.timeStamp, scr };
+  }, { capture: true, passive: true });
+  addEventListener('touchmove', e => { if (vs && (e.touches.length !== 1 || pz)) vs = null; }, { capture: true, passive: true });
+  addEventListener('touchend', e => {
+    const v = vs; vs = null; if (!v || e.touches.length) return; const f = [...e.changedTouches].find(x => x.identifier === v.id); if (!f) return;
+    const dx = f.clientX - v.x, dy = f.clientY - v.y, dt = e.timeStamp - v.t;
+    if (dt > 500 || Math.abs(dy) < 90 || Math.abs(dx) > Math.abs(dy) * .6) return;
+    const t = T(); if (!t || !t.details) return;
+    if (v.scr === 'shelf' && dy < 0) t.details(true); else if (v.scr === 'details' && dy > 0) t.details(false);
+  }, { capture: true, passive: true });
   addEventListener('touchcancel', e => { end(e, true); if (!e.touches.length) down.clear(); }, { capture: true, passive: true });
 
   // ---------- 4. the tap after a flick (beta.7) ----------
@@ -314,4 +334,19 @@
   };
   addEventListener('mousedown', tapSeen, true); addEventListener('click', tapSeen, true);
   window.BS_TAPFIX = { wait: TAP_WAIT }; // (for the device test)
+
+  // 6. (beta.12) the touch gestures, said once: the first time a finger touches the shelf, a short note a moment later
+  //    (kept on this device; never while the shelf slides, never over another screen)
+  let tipDone = false; try { tipDone = localStorage.getItem('bs:touchTip') === '1'; } catch {}
+  if (!tipDone) {
+    const first = () => {
+      removeEventListener('touchstart', first, true); tipDone = true;
+      const say = n => { const S = window.Shelf; if (!S || !S.getMode || !S.toast) return;
+        if ((window.BS_BUSY && BS_BUSY()) || S.getMode() !== 'browse') { if (n < 20) setTimeout(() => say(n + 1), 1500); return; }
+        try { localStorage.setItem('bs:touchTip', '1'); } catch {}
+        S.toast('Touch: double-tap a case to pick it up · swipe up for Details · swipe in from an edge to go back'); };
+      setTimeout(() => say(0), 2500);
+    };
+    addEventListener('touchstart', first, { capture: true, passive: true });
+  }
 })();

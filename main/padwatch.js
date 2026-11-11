@@ -331,6 +331,9 @@ $tbHid = __TBHIDE__; $coverOn = $false; $everFs = $false; $goneAt = 0; $goneSent
 if ($tbHid) { [XI]::Taskbar($false) | Out-Null }
 function TbBack() { if ($script:tbHid) { [XI]::Taskbar($true) | Out-Null; $script:tbHid = $false } }
 $menu = $false; $fresh = $false; $backHeld = @(0,0,0,0,0,0); $homeCool = Get-Date
+# (beta.12) when each slot's pad appeared (0: none there): a pad is switched on with its Guide / PS / Steam button, and
+# that press reached Home the moment the pad connected (the Home menu opened and closed on its own). Home waits 1.5 s
+$seenAt = @(0,0,0,0,0,0)
 # HID pads (slots 4-5) are read during a game; on the shelf only while the Home menu is open (the shelf reads them itself
 # otherwise, but the menu's buttons come from here: a DualSense or Switch pad couldn't move or close it). $hidLive / $hidMask:
 # a pad just seen keeps the buttons it already held out until they're let go (the PS press that opened the menu)
@@ -457,15 +460,16 @@ while ($true) {
   $mb = 0; $mt = 0; $mlx = 0; $mly = 0; $mry = 0; $mlt = 0; $mrt = 0
   for ($i = 0; $i -lt 6; $i++) { # 0-3 XInput, 4 Nintendo pads, 5 PlayStation pads (HID)
     # no pad in this slot (during the last sample): a hold in progress starts over when it's back
-    if ([int]$acc[$i] -lt 0 -and $passes -gt 0) { $held[$i] = 0; if ($backHeld[$i] -gt 0) { $backHeld[$i] = 0 }; if ($i -ge 4) { $hidLive[$i - 4] = $false }; continue }
+    if ([int]$acc[$i] -lt 0 -and $passes -gt 0) { $held[$i] = 0; $seenAt[$i] = 0; if ($backHeld[$i] -gt 0) { $backHeld[$i] = 0 }; if ($i -ge 4) { $hidLive[$i - 4] = $false }; continue }
     $s = New-Object -TypeName 'XI+ST'
-    if ([XI]::Get($i, [ref]$s) -ne 0) { $held[$i] = 0; if ($backHeld[$i] -gt 0) { $backHeld[$i] = 0 }; if ($i -ge 4) { $hidLive[$i - 4] = $false }; continue }
+    if ([XI]::Get($i, [ref]$s) -ne 0) { $held[$i] = 0; $seenAt[$i] = 0; if ($backHeld[$i] -gt 0) { $backHeld[$i] = 0 }; if ($i -ge 4) { $hidLive[$i - 4] = $false }; continue }
     $g = $s.Gamepad; $b = [int]$g.wButtons
+    if ($seenAt[$i] -eq 0) { $seenAt[$i] = $ms }
     if ($i -ge 4) { $k = $i - 4; if (-not $hidLive[$k]) { $hidLive[$k] = $true; $hidMask[$k] = $b }; $hidMask[$k] = $hidMask[$k] -band $b; $b = $b -band (-bnot $hidMask[$k]) }
     if (($b -band $mask) -eq $mask) { if ($held[$i] -le 0) { $held[$i] = $ms }; if ($ms - $held[$i] -ge $need -and (GameFront)) { ReleaseClick; Write-Output "QUIT"; exit } } else { $held[$i] = 0 }
     $pb0 = $prev[$i]; $tapped = [Math]::Max(0, [int]$acc[$i]) # pressed at some point since the last pass, even if already released
     if ($i -ge 4) { $tapped = $tapped -band (-bnot $hidMask[$i - 4]) }
-    if ($homeOn -and -not $menu -and ($now - $homeCool).TotalMilliseconds -gt 700) {
+    if ($homeOn -and -not $menu -and ($now - $homeCool).TotalMilliseconds -gt 700 -and ($ms - $seenAt[$i]) -ge 1500) {
       # Home: tap Guide, or hold View/Back on its own for about a second (HOME <slot>: 4 = a Nintendo pad, for its A/B layout)
       if ((($b -bor $tapped) -band 0x0400) -and -not ($pb0 -band 0x0400)) { if (GameFront) { Write-Output ("HOME " + $i) }; $homeCool = $now }
       # (every slot waits for its own release after: the same pad in two slots must not open it a second time)

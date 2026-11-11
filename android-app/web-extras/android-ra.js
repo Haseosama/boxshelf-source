@@ -145,21 +145,25 @@
     if (sys === 'megadrive' && e === '32x') return ''; // (a console of its own on RetroAchievements)
     return k;
   }
-  const hz = { db: null, q: [], queued: new Set(), running: false, off: false, found: false };
-  async function hashDb() { if (!hz.db) { const d = await load('ra-hash.json', null); hz.db = d && typeof d === 'object' && d.v === 1 && d.h ? d.h : {}; } return hz.db; }
+  // miss: games whose hash failed this session (an unreadable file, a folder not reachable right now); kept only in
+  // memory so a failure is tried again on the next start instead of being saved as "no hash" for good
+  const hz = { db: null, q: [], queued: new Set(), running: false, off: false, found: false, miss: new Set() };
+  async function hashDb() { if (!hz.db) { const d = await load('ra-hash.json', null); hz.db = d && typeof d === 'object' && d.v === 1 && d.h ? d.h : {};
+    for (const k of Object.keys(hz.db)) if (!hz.db[k]) delete hz.db[k]; } return hz.db; }
+  const hashKnown = g => { const k = hkey(g); return (k in hz.db) || hz.miss.has(k); };
   // the game's match: its hash when RetroAchievements knows it, else its title
   function matchGame(sys, L, g, title) {
     if (g && hz.db) { const h = hz.db[hkey(g)]; if (h && L.byHash.has(h)) return L.byHash.get(h); }
     return byTitle(L, g ? g.title : title);
   }
   // a hash is worth making only where the title isn't an exact match (arcade names cost nothing to hash)
-  const wantsHash = (sys, L, g) => { const k = kindFor(sys, g); return !!k && !hz.off && !(hkey(g) in hz.db) && (k === 'name' || !L.byN.has(norm(g.title))); };
+  const wantsHash = (sys, L, g) => { const k = kindFor(sys, g); return !!k && !hz.off && !hashKnown(g) && (k === 'name' || !L.byN.has(norm(g.title))); };
   async function hashNow(sys, games) { // → how many of them now match by hash
     if (hz.off || !games.length || typeof N.raHash !== 'function') return 0;
     let r; try { r = await N.raHash({ items: games.map(g => ({ uri: g.uri || '', kind: kindFor(sys, g), name: baseName(g.file), exts: sysExts[sys] || [] })) }); }
     catch (e) { hz.off = true; log('RetroAchievements: hashing not available here', e && e.message); return 0; } // (an older build without raHash)
     const list = (r && Array.isArray(r.hashes)) ? r.hashes : [];
-    games.forEach((g, i) => { hz.db[hkey(g)] = String(list[i] || '').toLowerCase(); });
+    games.forEach((g, i) => { const h = String(list[i] || '').toLowerCase(); if (h) hz.db[hkey(g)] = h; else hz.miss.add(hkey(g)); });
     await calm(); store('ra-hash.json', { v: 1, h: hz.db });
     let L = null; try { L = await gameList(sys); } catch { return 0; }
     return games.filter((g, i) => list[i] && L.byHash.has(String(list[i]).toLowerCase())).length;
@@ -176,7 +180,7 @@
         await calm(true);
         const sys = hz.q[0].sys, batch = [];
         while (batch.length < 6 && hz.q.length && hz.q[0].sys === sys) batch.push(hz.q.shift());
-        const games = batch.map(x => x.g).filter(g => !(hkey(g) in hz.db));
+        const games = batch.map(x => x.g).filter(g => !hashKnown(g));
         if (await hashNow(sys, games)) hz.found = true;
         batch.forEach(x => hz.queued.delete(x.g.id));
       }

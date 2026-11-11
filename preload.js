@@ -5,10 +5,10 @@ const call = (name, arg) => ipcRenderer.invoke(name, arg).then(r => { if (!r.ok)
 
 contextBridge.exposeInMainWorld('boxshelf', {
   // What this build can do (docs/PLATFORM-API.md). The Android build reports os 'android' and turns off what it can't do.
-  // (Linux / Steam Deck: no power menu, in-game Home menu, Windows emulator-settings fixes, start-with-Windows, Dolphin IPL
-  // setup, RetroArch auto-config or taskbar switch there yet)
+  // (Linux / Steam Deck: no in-game Home menu, Windows emulator-settings fixes, Dolphin IPL setup, RetroArch auto-config or
+  // taskbar switch there yet. beta.12: power (systemctl) and start at login (an autostart .desktop file) are on)
   platform: process.platform === 'linux'
-    ? { os: 'linux', caps: { steam: true, power: false, homeMenu: false, emuSettings: false, autostart: false, displays: true, folders: true, companionServer: true, winMode: false, dolphinIpl: false, raAutoConfig: false } }
+    ? { os: 'linux', caps: { steam: true, power: true, homeMenu: false, emuSettings: false, autostart: true, displays: true, folders: true, companionServer: true, winMode: false, dolphinIpl: false, raAutoConfig: false } }
     : { os: 'windows', caps: { steam: true, power: true, homeMenu: true, emuSettings: true, autostart: true, displays: true, folders: true, companionServer: true, winMode: true, dolphinIpl: true, raAutoConfig: true } },
   getConfig: () => call('config:get'),
   openExternal: url => call('app:openExternal', { url }),
@@ -51,6 +51,13 @@ contextBridge.exposeInMainWorld('boxshelf', {
   // (beta.5) a PC game's cover picker
   pcCoverOptions: (id, term) => call('pccover:options', { id, term }),
   pcCoverUse: (id, key) => call('pccover:use', { id, key }),
+  steamExit: () => call('steam:exit'), // (beta.12) closes Steam (it lets go of a controller it took over)
+  rocketFind: () => call('rocket:find'), // (beta.12, Windows) RocketLauncher
+  rocketSystems: exe => call('rocket:systems', { exe }),
+  // (beta.12) RomM
+  rommStatus: () => call('romm:status'), rommPairStart: () => call('romm:pairStart'), rommPairPoll: () => call('romm:pairPoll'),
+  rommPairCancel: () => call('romm:pairCancel'), rommPairCode: code => call('romm:pairCode', { code }), rommTest: () => call('romm:test'),
+  rommSync: () => call('romm:sync'), rommForget: () => call('romm:forget'), rommCancel: () => call('romm:cancel'),
   pcCoverOwn: id => call('pccover:own', { id }),
   pcCoverReset: id => call('pccover:reset', { id }),
   pcCoverMissing: () => call('pccover:missing'), // (beta.9) custom games with no cover chosen yet
@@ -124,10 +131,15 @@ contextBridge.exposeInMainWorld('boxshelf', {
   scanGameFolder: (root) => call('games:scanFolder', { root }), gameTitles: (exes) => call('games:titleFor', { exes }), gameCovers: (items) => call('games:covers', { items }),
   playniteFind: (dir) => call('playnite:find', { dir }), emulatorIn: (dir, systemId) => call('games:emuIn', { dir, systemId }), playnitePlan: (dir) => call('playnite:plan', { dir }),
   previewFind: (o) => call('preview:find', o || {}), previewWarm: (list) => call('preview:warm', Array.isArray(list) ? list : []),previewYt: (id, rect, muted) => call('preview:yt', { id, rect, muted }), previewYtMove: (rect, show) => call('preview:ytMove', { rect, show }),
-  previewYtStop: () => call('preview:ytStop'), previewCount: () => call('preview:count'), previewClearSteam: () => call('preview:clearSteam'),
+  previewYtStop: () => call('preview:ytStop'), previewClipAudio: url => call('preview:clipAudio', { url: String(url || '') }), /* (beta.12) a clip's sound for Details' box */ previewCount: () => call('preview:count'), previewClearSteam: () => call('preview:clearSteam'),
   onPreviewYt: (fn) => { const h = (_e, d) => fn(d); ipcRenderer.on('preview:yt', h); return () => ipcRenderer.removeListener('preview:yt', h); },
   // (beta.8) console trailers: a clip became ready; the helper's status, download and progress; clearing the clips
   onPreviewClip: (fn) => { const h = (_e, d) => fn(d); ipcRenderer.on('preview:clip', h); return () => ipcRenderer.removeListener('preview:clip', h); },
+  // (beta.12, Linux Game Mode) Boxshelf's own file / folder browser instead of the desktop's dialog (renderer/picker.js)
+  onPickOpen: (fn) => { const h = (_e, d) => fn(d); ipcRenderer.on('pick:open', h); return () => ipcRenderer.removeListener('pick:open', h); },
+  pickDone: (id, p) => ipcRenderer.send('pick:done', { id: +id || 0, path: p ? String(p) : '' }),
+  fsList: (dir, o) => call('fs:list', { dir: String(dir || ''), folder: !!(o && o.folder), exts: o && Array.isArray(o.exts) ? o.exts.map(String).slice(0, 40) : [] }), fsPlaces: () => call('fs:places'),
+  onNotice: (fn) => { const h = (_e, d) => fn(String(d || '')); ipcRenderer.on('app:notice', h); return () => ipcRenderer.removeListener('app:notice', h); }, /* (beta.12) a message from main for the screen (Linux: Power refused) */
   // (beta.8) Steam Deck: where Boxshelf runs ({ deck, steam, gameMode, canAdd, inSteam }) and Add Boxshelf to Steam
   deckInfo: () => call('deck:info'), addToSteam: (closeSteam) => call('deck:addToSteam', { closeSteam: !!closeSteam }),
   clipStatus: () => call('ytclip:status'), clipHelper: () => call('ytclip:helper'), clipClear: () => call('ytclip:clear'),
@@ -143,12 +155,16 @@ contextBridge.exposeInMainWorld('boxshelf', {
   findIpl: systemId => call('dolphin:ipl', { systemId }),
   openIplFolder: (systemId, region) => call('dolphin:iplFolder', { systemId, region }),
   toggleFullscreen: () => call('app:fullscreen'),
+  setScreenMode: mode => call('seamless:screenMode', { mode: String(mode || '') }), // (beta.12) Seamless play: 'full' | 'window'
+  watchCancel: () => call('seamless:cancel'), // (beta.12) B before a watched Steam / store game showed up: { cancelled }
+  onWatchGaveUp: fn => ipcRenderer.on('run:watchGaveUp', () => fn()), // (beta.12) it never showed up: the old "Running through" note
   winMode: mode => call('app:winMode', { mode: String(mode || '') }), // the smoothness test: 'full' | 'max' | 'half'
   quit: why => call('app:quit', { why: typeof why === 'string' ? why : '' }),
   power: kind => call('app:power', kind),
   onUiScale: fn => ipcRenderer.on('ui:scale', (e, d) => fn(d)),
   chooseArt: id => call('art:choose', { id }),
   gameEmulator: id => call('game:emulator', { id }),
+  gameStatus: (id, status) => call('game:status', { id, status }), // (beta.12) Details → Your play → Status
   onWiimote: fn => ipcRenderer.on('wiimote', (e, d) => fn(d)), // the Wii remote: { x, y, seen, b, hold } / { on }
   wmRumble: ms => ipcRenderer.send('wm:rumble', ms),
   padsPresent: () => call('pads:present'), // the real controllers plugged in: [{ vendor, product, style }]

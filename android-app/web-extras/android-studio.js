@@ -26,8 +26,13 @@
   // (this file is only in the Android build; it runs before platform.js, so the platform is checked when the studio opens)
   const A = () => window.boxshelf || {};
   const PARTS = ['front', 'back', 'spine', 'disc'], ROWS = ['sets', ...PARTS];
-  const NAME = { sets: 'Sets', front: 'Front', back: 'Back', spine: 'Spine', disc: 'Disc' };
-  const LONG = { sets: 'Whole case', front: 'Front cover', back: 'Back cover', spine: 'Spine', disc: 'Disc' };
+  // (beta.12) the disc part is named for what the console's games come on: a cartridge (DS, GBA, Switch…), a UMD, a floppy
+  // disk, a disc; the same words as the Windows studio (settings.js MEDIA_WORD)
+  const mediaWord = () => { const id = S && S.sys, m = ((window.BS_SYSTEMS_EXTRA && BS_SYSTEMS_EXTRA.media) || {})[id] || {};
+    return m.form === 'floppy' ? 'Floppy disk' : id === 'sw' || id === 'sw2' || id === 'n3ds' || m.kind === 'cart' ? 'Cartridge' : id === 'psp' ? 'UMD' : 'Disc'; };
+  const words = o => new Proxy(o, { get: (t, k) => (k === 'disc' ? mediaWord() : t[k]) });
+  const NAME = words({ sets: 'Sets', front: 'Front', back: 'Back', spine: 'Spine', disc: 'Disc' });
+  const LONG = words({ sets: 'Whole case', front: 'Front cover', back: 'Back cover', spine: 'Spine', disc: 'Disc' });
   const SRC = { gametdb: 'GameTDB', launchbox: 'LaunchBox', screenscraper: 'ScreenScraper', libretro: 'Libretro', steamgrid: 'SteamGridDB', steamgriddb: 'SteamGridDB', igdb: 'IGDB', current: 'On your shelf', earlier: 'Earlier pick', own: 'Your picture' };
   // the special cards at the end of a row: [icon, card title, card line, preview title, preview line (p, it), button]
   // more (0.3.1): a source that could add versions of this part isn't set up yet; it opens Accounts & services, and the
@@ -38,6 +43,15 @@
     shelf: ['↺', 'Shelf style', 'Let the shelf choose', 'Back to the shelf style', () => 'This part stops being your pick and follows the shelf style again', 'Use the shelf style'],
     more: ['⊕', 'More art sources', '', 'More art sources', (p, it) => `${it.miss.join(' and ')} can add more ${LONG[p].toLowerCase()} versions: set ${it.miss.length > 1 ? 'them' : 'it'} up in Accounts & services (free), then you're back here`, 'Set up'],
     undoset: ['↶', 'Undo set', 'The four before', 'Undo the set', () => 'Put back the pictures all four parts had before the set went in', 'Undo set'] };
+  // (beta.12) each art source that isn't set up yet has a card of its own at the end of a row, saying what it brings:
+  // LaunchBox downloads its database right here; the others open their account in Accounts & services, then the studio
+  // comes back on the same game and part with their versions in the row
+  const SRCCARD = {
+    LaunchBox: ['⇣', 'LaunchBox art', 'Download · about 110 MB', 'LaunchBox art', p => `Fronts, backs, full boxes and discs for most consoles, from LaunchBox's free database. A one-time download of about 110 MB; then this game's ${LONG[p].toLowerCase()} versions show in this row`, 'Download'],
+    SteamGridDB: ['⊕', 'SteamGridDB', 'Free key · fronts in HD', 'SteamGridDB', () => "Front covers made by fans, many in HD. Add a free SteamGridDB key in Accounts & services (a minute), then you're back here", 'Set up'],
+    ScreenScraper: ['⊕', 'ScreenScraper', 'Free account · every part', 'ScreenScraper', () => "Fronts, backs, spines, discs and full boxes for most consoles. Sign in with your free ScreenScraper account in Accounts & services, then you're back here", 'Connect'],
+    IGDB: ['⊕', 'IGDB', 'Free key · fronts', 'IGDB', () => "Front covers from IGDB. Add a free IGDB key in Accounts & services, then you're back here", 'Set up'] };
+  const actOf = it => (it.act === 'more' && it.src && SRCCARD[it.src]) || ACTS[it.act];
   // (0.3.5) the looks on the Sets row: each part picked again by that look (a part with nothing that fits keeps its picture)
   const LOOKS = [['hd', 'Sharpest of each', 'Every part in its HD version', 'HD'], ['region:usa', 'All USA', 'Every part from the USA release', 'USA'],
     ['region:eur', 'All Europe', 'Every part from the European release', 'EUR'], ['region:jpn', 'All Japan', 'Every part from the Japanese release', 'JPN']];
@@ -66,6 +80,7 @@
     S = { sys: o.systemId, file: o.file, title: o.title || g.title || '', id: o.id, ratio: 0.71, art: Object.assign({}, g.art || {}), lock: {}, sysName: '', row: 1, rows: {}, info: null, o };
     for (const p of ROWS) S.rows[p] = { part: p, list: null, state: 'idle', i: -1, sx: 0, xs: [], ws: [], cards: [], changed: false, err: '' };
     E.title.textContent = S.title; E.kick.textContent = 'Art Studio'; E.msg.classList.remove('on');
+    { const tb = E.el.querySelector('.bst-row[data-part="disc"] .bst-tt b'); if (tb) tb.textContent = NAME.disc; E.el.classList.toggle('bst-cart', mediaWord() !== 'Disc'); } // (this console's word, and a cartridge / UMD / floppy is never cut into a circle: the overlay is built once)
     E.el.classList.toggle('bst-dual', !!(window.BS_BOTTOM_STUDIO && BS_BOTTOM_STUDIO.on()));
     shapeSet(null);
     for (const p of ROWS) paintRow(p);
@@ -99,6 +114,17 @@
       for (const k in E.faces) { E.faces[k]._u = null; E.faces[k].style.backgroundImage = ''; } }, 400);
   }
   const isOpen = () => !!S;
+  // (beta.12) LaunchBox's art database, downloaded from its card: the progress on the card's line, then every row looked
+  // through again with LaunchBox's versions in it (once: a second tap while it runs does nothing)
+  let lbRun = false, lbNote = '';
+  async function lbGet() {
+    if (lbRun || !api.artBuildIndex || !S) return; lbRun = true; lbNote = 'Starting the download…'; const me = S; snd('tick', 1); say('LaunchBox art: downloading…'); paint();
+    const off = api.onArtIndex ? api.onArtIndex(e => { if (S !== me || !e) return; if (e.pct != null) { lbNote = `${e.phase === 'read' ? 'Sorting' : 'Downloading'} · ${Math.round(e.pct)}%`; paint(); } }) : null;
+    try { await api.artBuildIndex(); if (S !== me) return; snd('toast'); say('LaunchBox art is ready: looking for versions again');
+      for (const q of ROWS) load(q, true); }
+    catch (e) { if (S === me) { snd('error'); say(`LaunchBox art didn't download: ${(e && e.message) || e}`, true); } }
+    finally { lbRun = false; lbNote = ''; if (typeof off === 'function') off(); if (S === me) paint(); }
+  }
   // "More art sources": Accounts & services in Settings, then back to this game and part (its versions looked for again)
   function sources(part) {
     if (!S || !window.Setup || !Setup.open) return;
@@ -209,7 +235,10 @@
       if (api.artOwn) R.list.push({ act: 'own', key: 'act-own' });
       if (api.artUndo && R.changed) R.list.push({ act: 'undo', key: 'act-undo' });
       if (api.artMix && S.lock[p]) R.list.push({ act: 'shelf', key: 'act-shelf' });
-      const miss = api.artSourcesMissing && !S.o.onClose ? api.artSourcesMissing(S.sys, p) : []; if (miss.length) R.list.push({ act: 'more', key: 'act-more', miss }); // (not over the museum: Settings can't open there)
+      // a card for each source not set up yet (an account one not over the museum: Settings can't open there; LaunchBox's
+      // download works anywhere)
+      const miss = api.artSourcesMissing ? api.artSourcesMissing(S.sys, p) : [];
+      for (const src of miss) if (src === 'LaunchBox' || !S.o.onClose) R.list.push({ act: 'more', key: 'act-more-' + src, miss: [src], src });
     }
     let i = cur ? R.list.findIndex(x => x.key === cur) : -1; if (i < 0) i = R.list.findIndex(x => x.inUse); R.i = Math.max(0, i);
     layoutRow(p);
@@ -261,7 +290,7 @@
     let x = 0; (R.list || []).forEach((it, i) => {
       const w = cardW(p, it), c = document.createElement('div'); c.className = 'bst-card ' + p + (it.act ? ' act' : it.look ? ' look' : ''); c.dataset.i = i;
       c.style.cssText = `width:${w}px;transform:translate3d(${x}px,0,0)`;
-      if (it.act) { const K = ACTS[it.act]; c.innerHTML = `<div class="im"><span>${K[0]}</span></div><div class="cap"><b>${K[1]}</b><span>${esc(it.act === 'more' ? it.miss.join(' · ') : K[2])}</span></div>`; }
+      if (it.act) { const K = actOf(it); c.innerHTML = `<div class="im"><span>${K[0]}</span></div><div class="cap"><b>${K[1]}</b><span>${esc(it.act === 'more' && !it.src ? it.miss.join(' · ') : K[2])}</span></div>`; }
       else if (it.look) c.innerHTML = `<div class="im"><span class="tag">${esc(it.tag)}</span></div><div class="cap"><b>${esc(it.name)}</b><span>Each part</span></div>`;
       else { c.innerHTML = `<div class="im"><div class="ph"></div>${it.set ? '<i class="dsc"></i>' : ''}</div><div class="cap"><b></b><span></span></div>${OK}`; fillCard(c, it, p); }
       T.appendChild(c); R.cards.push(c); R.xs.push(x); R.ws.push(w); x += w + CARD_GAP; });
@@ -343,13 +372,13 @@
       if (el._u !== u) { el._u = u; el.style.backgroundImage = u ? cssUrl(u) : ''; el.classList.toggle('none', !u); } }
     const n = R.list ? R.list.length : 0;
     let k = LONG[id] + (n && it ? ` · ${R.i + 1} of ${n}` : ''), b = LONG[id], s = '';
-    if (it && it.act) { const K = ACTS[it.act]; b = K[3]; s = K[4](id, it); }
+    if (it && it.act) { const K = actOf(it); b = K[3]; s = it.src === 'LaunchBox' && lbRun ? lbNote : K[4](id, it); }
     else if (it && it.look) { b = it.name; s = `${it.sub} · a part with no such version keeps its picture`; }
     else if (it && it.set) { b = label(it); s = [meta(it), PARTS.every(q => it.set.parts[q] && it.set.parts[q].thumb) ? '' : 'pictures coming in…'].filter(Boolean).join(' · '); }
     else if (it) { b = label(it); s = [meta(it), it.edition === 'special' ? 'Special edition' : it.edition === 'reprint' ? 'Reprint' : '', it.kind === 'hd' ? 'HQ' : ''].filter(Boolean).join(' · ') || LONG[id]; }
     else s = R.state === 'loading' ? (id === 'sets' ? 'Putting the sets together…' : 'Looking for every version…') : 'Nothing to choose from yet';
     if (E.whatK.textContent !== k) E.whatK.textContent = k; if (E.whatB.textContent !== b) E.whatB.textContent = b; if (E.whatS.textContent !== s) E.whatS.textContent = s;
-    const inUse = !!(it && it.inUse), ut = busy ? 'Saving…' : inUse ? 'On your shelf' : it && it.act ? ACTS[it.act][5] : it && it.set ? 'Use this set' : it && it.look ? 'Use this look' : 'Use this';
+    const inUse = !!(it && it.inUse), ut = busy ? 'Saving…' : inUse ? 'On your shelf' : it && it.src === 'LaunchBox' && lbRun ? 'Downloading…' : it && it.act ? actOf(it)[5] : it && it.set ? 'Use this set' : it && it.look ? 'Use this look' : 'Use this';
     const uh = inUse ? `<svg viewBox="0 0 24 24"><path d="M5 12.5l4.2 4.2L19 7"/></svg>${ut}` : `<kbd>A</kbd>${esc(ut)}`; if (E.use._h !== uh) { E.use._h = uh; E.use.innerHTML = uh; }
     E.use.classList.toggle('inuse', inUse); E.use.disabled = !it || busy || inUse;
   }
@@ -376,7 +405,7 @@
     if (a === 'y') { if (id === 'sets') { snd('error'); say('Your own picture goes on one part: pick Front, Back, Spine or Disc'); return; } own(id); return; }
     if (a === 'x') { if (id === 'sets') allShelf(); else shelfStyle(id); return; }
     if (a === 'a') { const it = R.list && R.list[R.i]; if (!it || busy) return;
-      if (it.act === 'own') own(id); else if (it.act === 'undo') undo(id); else if (it.act === 'shelf') shelfStyle(id); else if (it.act === 'more') sources(id); else if (it.act === 'undoset') undoSet();
+      if (it.act === 'own') own(id); else if (it.act === 'undo') undo(id); else if (it.act === 'shelf') shelfStyle(id); else if (it.act === 'more') { if (it.src === 'LaunchBox') lbGet(); else sources(id); } else if (it.act === 'undoset') undoSet();
       else if (it.inUse) { snd('error'); say(`${LONG[id]}: that one is already on your shelf`); } else if (it.set) useSet(it); else if (it.look) useLook(it); else use(id, it); }
   }
 

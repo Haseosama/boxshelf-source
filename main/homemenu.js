@@ -49,7 +49,7 @@ let getMainWin = () => null;
 // the screen Boxshelf itself is on (a TV set up as the second display), not always the primary one
 function displayBounds() { try { const m = getMainWin(); if (m && !m.isDestroyed()) return screen.getDisplayMatching(m.getBounds()).bounds; } catch {} return screen.getPrimaryDisplay().bounds; }
 // menu-wide preferences: which face button confirms, and the chosen audio output device
-function uiExtras() { let u = {}; try { u = getUi() || {}; } catch {} return { confirmButton: u.confirmButton === 'b' ? 'b' : 'a', audioOut: typeof u.audioOut === 'string' ? u.audioOut : '' }; }
+function uiExtras() { let u = {}; try { u = getUi() || {}; } catch {} return { confirmButton: u.confirmButton === 'b' ? 'b' : 'a', audioOut: typeof u.audioOut === 'string' ? u.audioOut : '', reduceMotion: u.reduceMotion === true || u.reduceMotion === 'system' ? u.reduceMotion : false }; } /* (beta.12: the menu follows Boxshelf's Reduce motion, not the system by itself) */
 // Confirm "Match my controller" (auto) and Home pressed on a Switch pad: its A (the right button) confirms, as on the shelf,
 // and the prompts show its letters (whatever the setting). The helper reports Nintendo pads by position: their A arrives as 'b'.
 function ninExtras() { let u = {}; try { u = getUi() || {}; } catch {}

@@ -6,7 +6,7 @@
 'use strict';
 const path = require('path');
 
-const STEPS = ['Welcome', 'Consoles', 'Your games', 'Details', 'Inspect', 'Quick menu', 'Art Studio', 'Adding games', 'Done'];
+const STEPS = ['Welcome', 'Consoles', 'Your games', 'Find a game', 'Details', 'Inspect', 'Quick menu', 'Art Studio', 'Adding games', 'Done'];
 
 module.exports = async function tourPass({ browser, base, check, OUT }) {
   const ctx = await browser.newContext({ viewport: { width: 1600, height: 900 } });
@@ -59,8 +59,8 @@ module.exports = async function tourPass({ browser, base, check, OUT }) {
     const after = await page.evaluate(() => ({ on: BS_TOUR.on(), mode: Shelf.getMode(), settings: Settings.isOpen(), qm: Shelf.quickMenuOpen(), done: !!((Shelf._tour.cfg() || {}).ui || {}).tourDone }));
     check('Tour (Windows): an install set up before this version doesn\'t get it on its own; Settings → Shelf → Show the tour starts it',
       !auto && row.found && row.on && !row.settings, JSON.stringify({ auto, row }));
-    check('Tour: nine steps in order, each opening its screen (Details, Inspect, the quick menu, the Art Studio, Settings)',
-      seen.map(s => s.k).join() === STEPS.join() && by('Details').mode === 'details' && by('Inspect').mode === 'inspect' && by('Quick menu').qm && by('Art Studio').settings && by('Adding games').settings && by('Done').mode === 'browse' && !by('Done').settings,
+    check('Tour: ten steps in order, each opening its screen (Find a game, Details, Inspect, the quick menu, the Art Studio, Settings)',
+      seen.map(s => s.k).join() === STEPS.join() && by('Find a game').mode === 'find' && by('Details').mode === 'details' && by('Inspect').mode === 'inspect' && by('Quick menu').qm && by('Art Studio').settings && by('Adding games').settings && by('Done').mode === 'browse' && !by('Done').settings,
       JSON.stringify(seen.map(s => [s.k, s.mode, s.settings ? 'S' : '', s.qm ? 'Q' : ''])));
     check('Tour: on the Inspect step the case turns by itself (a side every couple of seconds), and stops after', (by('Inspect').turns || 0) >= 1 && await page.evaluate(async () => { const n = window.__turns; await new Promise(r => setTimeout(r, 2600)); return window.__turns === n; }),
       JSON.stringify({ turns: by('Inspect').turns }));
@@ -122,6 +122,44 @@ module.exports = async function tourPass({ browser, base, check, OUT }) {
     check('Tour: closed straight after setup, it comes on the next start; once ended, never again', on && !again, JSON.stringify({ on, again }));
   } catch (e) { check('Tour (owed) ran to the end', false, e && e.message); }
   await octx.close();
+
+  // (bug review) Settings closing with a classic page still over it (the phone companion's Play does that) takes the page
+  // too, so it can't stay over the shelf; Settings opened again straight away still closes
+  const sctx = await browser.newContext({ viewport: { width: 1600, height: 900 } });
+  await sctx.addInitScript(() => { try { Object.defineProperty(Navigator.prototype, 'getGamepads', { configurable: true, value: () => [null, null, null, null] }); } catch (e) {} });
+  const sp = await sctx.newPage();
+  try {
+    await sp.goto(base + '?platform=windows&shelf=1'); await sp.waitForFunction(() => window.Shelf && Shelf._qs && Shelf._qs().g && window.Setup && window.Settings, null, { timeout: 90000, polling: 250 });
+    const s = await sp.evaluate(async () => { const w = ms => new Promise(r => setTimeout(r, ms)), o = {};
+      const until = async (f, ms) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (f()) return true; await w(100); } return false; };
+      Setup.open({ page: 'display' }); await until(() => Settings.isOpen(), 5000); await w(500);
+      Setup.openLegacy('games', { back: () => {} }); await w(400); o.up = Setup.legacyOpen() && !!document.querySelector('#setup.on');
+      await Settings.close(); await w(300); o.gone = !document.querySelector('#setup.on') && !Setup.legacyOpen() && !Settings.isOpen();
+      Setup.open({ page: 'display' }); await until(() => Settings.isOpen(), 5000); await w(400); await Settings.close(); o.again = !Settings.isOpen();
+      return o; });
+    check('Settings: closing it takes a classic page left over it too (never stuck over the shelf); opened again, it closes', s.up && s.gone && s.again, JSON.stringify(s));
+  } catch (e) { check('Settings close (classic page) ran to the end', false, e && e.message); }
+  await sctx.close();
+
+  // (beta.12) RocketLauncher in Settings → Consoles: found (?rl=1, the pretend one), its switch, the front end; GameCube's page
+  // gets "Start games with" and the folder check once it's on; nothing at all when RocketLauncher isn't there
+  const rlRows = async (q, on) => { const ctx = await browser.newContext({ viewport: { width: 1600, height: 900 } });
+    await ctx.addInitScript(() => { try { Object.defineProperty(Navigator.prototype, 'getGamepads', { configurable: true, value: () => [null, null, null, null] }); } catch (e) {} });
+    const pg = await ctx.newPage(); let o = null;
+    try { await pg.goto(base + '?platform=windows&shelf=1' + q); await pg.waitForFunction(() => window.Shelf && Shelf._qs && Shelf._qs().g && window.Setup && window.Settings, null, { timeout: 90000, polling: 250 });
+      o = await pg.evaluate(async on => { const w = ms => new Promise(r => setTimeout(r, ms)), o = {};
+        const names = () => [...document.querySelectorAll('#bss .bss-row')].map(r => r.innerText.replace(/\s+/g, ' ').trim().slice(0, 140));
+        Setup.open({ page: 'consoles' }); for (let i = 0; i < 40 && !document.querySelector('#bss.on .bss-row'); i++) await w(150); await w(1500); o.consoles = names().filter(n => /RocketLauncher/.test(n));
+        if (on) { const c = (await window.boxshelf.getConfig()).config; c.rocket = { exe: 'C:\\HyperSpin\\RocketLauncher\\RocketLauncher.exe', mode: 'all', frontend: '' }; await window.boxshelf.saveConfig(c);
+          const ci = Shelf.config && Shelf.config(); if (ci && ci.config) ci.config.rocket = c.rocket; await Settings.close(); await w(800);
+          Setup.open({ page: 'gc' }); for (let i = 0; i < 40 && !document.querySelector('#bss.on .bss-row'); i++) await w(150); await w(1500); o.gc = names().slice(0, 5); }
+        if (Settings.isOpen()) await Settings.close(); return o; }, on);
+    } catch (e) { o = { err: e.message }; } await ctx.close(); return o; };
+  const rOn = await rlRows('&rl=1', true), rOff = await rlRows('', false);
+  check('RocketLauncher (beta.12): Settings → Consoles finds it and offers the switch; on, a console page starts with "Start games with" and the folder check; not there, only its "Not found" row (no switches)',
+    rOn && rOn.consoles && rOn.consoles.some(n => /^RocketLauncher .*systems? set up there.*Found/.test(n)) && rOn.consoles.some(n => /^Start games through RocketLauncher/.test(n)) &&
+    rOn.gc && /^Start games with .*RocketLauncher/.test(rOn.gc[1] || '') && rOn.gc.some(n => /^RocketLauncher system name Nintendo GameCube/.test(n)) && rOn.gc.some(n => /^Games folder for RocketLauncher Matches/.test(n)) &&
+    rOff && rOff.consoles && rOff.consoles.length === 1 && /Not found/.test(rOff.consoles[0]), JSON.stringify({ gc: rOn && rOn.gc, err: rOn && rOn.err, off: rOff }).slice(0, 700));
 
   // the Android page: never
   const actx = await browser.newContext({ viewport: { width: 853, height: 480 }, deviceScaleFactor: 2.25, isMobile: true, hasTouch: true });

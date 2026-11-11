@@ -64,4 +64,21 @@ function zipList(file) {
   return null;
 }
 
-module.exports = { isLinux, appRoot, isRetroArch, retroCore, unzip, unzipAsync, zipList };
+// (beta.12) one fixed name for Boxshelf's AppImage, ~/.local/share/boxshelf/Boxshelf.AppImage: a link pointed at the
+// AppImage that's running, each time it starts. Steam's shortcut and Start at login use it, so a new version (a new file
+// name: Boxshelf-<version>-linux.AppImage) doesn't leave them pointing at a file that's gone. '' outside an AppImage
+function stableAppImage(env = process.env, home = os.homedir()) {
+  if (!isLinux && !env.BS_FAKE_LINUX) return '';
+  const cur = env.APPIMAGE; if (!cur) return '';
+  let real = cur; try { real = fs.realpathSync(cur); } catch {}
+  const link = path.join(env.XDG_DATA_HOME || path.join(home, '.local', 'share'), 'boxshelf', 'Boxshelf.AppImage');
+  if (path.resolve(real) === path.resolve(link)) return link;
+  try {
+    let st = null; try { st = fs.lstatSync(link); } catch {}
+    if (st && !st.isSymbolicLink()) return real; // (a real file kept there by hand is never replaced)
+    let now = null; try { now = fs.readlinkSync(link); } catch {}
+    if (now !== real) { fs.mkdirSync(path.dirname(link), { recursive: true }); if (st) { try { fs.unlinkSync(link); } catch {} } fs.symlinkSync(real, link); }
+    return link;
+  } catch { return real; } // (a folder that can't be written: the AppImage itself, as before)
+}
+module.exports = { isLinux, appRoot, isRetroArch, retroCore, unzip, unzipAsync, zipList, stableAppImage };

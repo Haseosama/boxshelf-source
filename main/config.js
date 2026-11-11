@@ -40,13 +40,19 @@ function defaults() {
     emuSetup: { auto: true, graphics: 'auto', resume: false, pending: [] },
     apps,
     ra: { user: '', key: '', enabled: true },
+    // (beta.12, Windows) RocketLauncher (main/rocket.js): its program, which consoles start through it (off · all · some:
+    // the consoles whose systems.<id>.viaRocket is on) and the front end name it's told (-p; '' leaves -p out)
+    rocket: { exe: '', mode: 'off', frontend: '' },
     // autoCovers / autoManuals: downloads from the Internet are opt-in for new installs; load() keeps them on for a config
     // saved before the keys existed, so nothing changes for people already using Boxshelf
-    keys: { fanart: '', steamgriddb: '', ssUser: '', ssPass: '', ssDevId: '', ssDevPass: '' }, // Settings → Accounts & services: personal API keys, kept encrypted on disk (steamgriddb: Art Studio posters; ss*: the ScreenScraper sign-in, 1.71)
+    // (beta.12) RomM (main/romm.js): the server's address, its HTTPS check skipped for a home server's own certificate,
+    // and whether games not on this device show (with a cloud badge). Its sign-in token is keys.rommToken (kept by main)
+    romm: { server: '', skipTls: false, cloud: true },
+    keys: { fanart: '', steamgriddb: '', ssUser: '', ssPass: '', ssDevId: '', ssDevPass: '', rommToken: '', rommTokenServer: '' }, // Settings → Accounts & services: personal API keys, kept encrypted on disk (steamgriddb: Art Studio posters; ss*: the ScreenScraper sign-in, 1.71)
     // Art Studio: styles = per console shelf style (a console without one follows defaultArtStyle(ui), i.e. the old Box art
     // region / Prefer HD settings, so nothing changes until a style is chosen); locks = per game parts auto-fetch never touches
     art: { styles: {}, locks: {} },
-    ui: { sound: true, startFullscreen: true, buttons: 'auto', performance: 'auto', quitCombo: true, quitComboKeys: 'l3+r3', soundTheme: 'aero', volume: .7, ambient: false, ambientLevel: .02, music: 'off', musicLevel: .4, rumble: true, soundRev: 4, autoCovers: false, autoManuals: false, artLibrary: '', attract: true, attractMinutes: 3, shuffleAll: true, favorites: [], collections: [], background: 'blur', theme: 'spectrum', sort: 'az', filter: 'all', museumLight: 'gallery', homeMenu: true, homeLayout: 'side', hideTaskbar: true, uiScale: 1, previews: 'off', previewSound: false, previewYoutube: true, previewClips: true, previewDirs: [], previewDelay: 1.5, previewHint: false, clipHint: false, deckHint: false, lastSeenVersion: '', // (beta.7) video previews; lastSeenVersion: the version whose What's new was shown: off / details / shelf (Details and behind the shelf); the first run asks
+    ui: { sound: true, startFullscreen: true, buttons: 'auto', performance: 'auto', quitCombo: true, quitComboKeys: 'l3+r3', soundTheme: 'aero', volume: .7, ambient: false, ambientLevel: .02, music: 'off', musicLevel: .4, rumble: true, soundRev: 4, autoCovers: false, autoManuals: false, artLibrary: '', attract: true, attractMinutes: 3, attractPace: 'normal', attractWander: true,shuffleAll: true, favorites: [], collections: [], background: 'blur', theme: 'spectrum', sort: 'az', filter: 'all', museumLight: 'gallery', homeMenu: true, homeLayout: 'side', hideTaskbar: true, seamless: true, screenMode: '', windowBounds: null, uiScale: 1, previews: 'off', previewSound: false, previewYoutube: true, previewClips: true, previewDirs: [], previewDelay: 1.5, previewHint: false, clipHint: false, deckHint: false, leaveHint: false, lastSeenVersion: '', // (beta.7) video previews; lastSeenVersion: the version whose What's new was shown: off / details / shelf (Details and behind the shelf); the first run asks
       // 1.55 Settings
       updateCheck: true, // (1.82) Settings → System → Check for new betas
       openInto: 'last', display: '', safeArea: 100, clock: 'full', clock24: false, reduceMotion: false, dimMinutes: 0, confirmButton: 'auto', scrollSpeed: 'normal', artRegion: 'auto', audioOut: '', hidden: [], museumStyle: { walkIn: true } }
@@ -57,6 +63,8 @@ function defaults() {
 // ui, or one system) or an array (favorites, romDirs), a saved value of another shape ("ui": null, a hand-edited string)
 // is dropped for the default: the app reads cfg.ui.x everywhere and would crash on startup.
 const isObj = v => !!v && typeof v === 'object' && !Array.isArray(v);
+// (beta.12) Details' Status per game (cfg.games[id].status): the words the shelf can sort and filter by later
+const GAME_STATUS = ['playing', 'finished', 'notstarted', 'abandoned'];
 function merge(base, saved) {
   if (!isObj(saved)) return saved === undefined ? base : saved;
   const out = Array.isArray(base) ? [] : { ...base };
@@ -151,12 +159,17 @@ function writeNow(json, tmpName) {
 }
 // the same, without holding up the main process (a slow disk, antivirus scanning the file): the write, its fsync and the
 // rename retries all wait in the background
+// (beta.12) flushGen: flush() at quit writes the newest settings itself; a background write started before it (older
+// settings) must not rename over that afterwards, so it checks the generation it began in and stands down
+let flushGen = 0;
 async function writeLater(json) {
+  const g = flushGen;
   await fs.promises.mkdir(path.dirname(FILE), { recursive: true });
   const tmp = FILE + '.tmp'; let fh = null;
   try {
     fh = await fs.promises.open(tmp, 'w', 0o600); await fh.writeFile(json); await fh.sync(); await fh.close(); fh = null;
-    for (let i = 0; ; i++) { try { await fs.promises.rename(tmp, FILE); break; } catch (e) { if (i >= 20 || !['EPERM', 'EACCES', 'EBUSY'].includes(e.code)) throw e; await new Promise(r => setTimeout(r, 50)); } }
+    if (g !== flushGen) { await fs.promises.unlink(tmp).catch(() => {}); return; }
+    for (let i = 0; ; i++) { if (g !== flushGen) { await fs.promises.unlink(tmp).catch(() => {}); return; } try { await fs.promises.rename(tmp, FILE); break; } catch (e) { if (i >= 20 || !['EPERM', 'EACCES', 'EBUSY'].includes(e.code)) throw e; await new Promise(r => setTimeout(r, 50)); } }
   } catch (e) { if (fh) { try { await fh.close(); } catch {} } try { await fs.promises.unlink(tmp); } catch {} throw e; }
 }
 // (beta.9) save(): checked and turned into text at once (so a bad object or a blocked file is said straight away, as
@@ -177,7 +190,7 @@ function save(cfg) {
 }
 function flush() {
   if (waiting == null && !writing) return;
-  const json = lastJson; waiting = null;
+  const json = lastJson; waiting = null; flushGen++;
   try { writeNow(json, '.tmp-quit'); } catch (e) { log('Settings: last save at quit failed:', e.message); }
 }
 
@@ -191,13 +204,14 @@ function sanitize(cfg) {
   if (!isObj(cfg) || !isObj(cfg.ui)) return cfg;
   const ui = cfg.ui, d = defaults().ui;
   // per-game emulator overrides: plain paths only, a sane number of them
-  const games = {}; if (isObj(cfg.games)) for (const [id, v] of Object.entries(cfg.games).slice(0, 5000)) { if (typeof id !== 'string' || id.length > 2048 || !isObj(v)) continue; const e = typeof v.emulator === 'string' ? v.emulator.trim().slice(0, 1024) : '', t = typeof v.title === 'string' ? v.title.replace(/\s+/g, ' ').trim().slice(0, 120) : ''; if (e || t) games[id] = { ...(e ? { emulator: e } : {}), ...(t ? { title: t } : {}) }; } // (beta.5: title = the name the player gave it)
+  // (beta.5: title = the name the player gave it) (beta.12: status = Details' Status, one of GAME_STATUS)
+  const games = {}; if (isObj(cfg.games)) for (const [id, v] of Object.entries(cfg.games).slice(0, 5000)) { if (typeof id !== 'string' || id.length > 2048 || !isObj(v)) continue; const e = typeof v.emulator === 'string' ? v.emulator.trim().slice(0, 1024) : '', t = typeof v.title === 'string' ? v.title.replace(/\s+/g, ' ').trim().slice(0, 120) : '', st = GAME_STATUS.includes(v.status) ? v.status : ''; if (e || t || st) games[id] = { ...(e ? { emulator: e } : {}), ...(t ? { title: t } : {}), ...(st ? { status: st } : {}) }; }
   cfg.games = games;
   // (beta.7) your collections (shelves of your own): [{ id, name, ids: [game ids] }], a sane number and size
   ui.lastSeenVersion = typeof ui.lastSeenVersion === 'string' ? ui.lastSeenVersion.slice(0, 40) : '';
   if (!['off', 'details', 'shelf'].includes(ui.previews)) ui.previews = 'off'; for (const k of ['previewSound', 'previewYoutube', 'previewClips']) if (typeof ui[k] !== 'boolean') ui[k] = d[k];
   { const n = +ui.previewDelay; ui.previewDelay = [0.5, 1, 1.5, 2, 3, 5, 8, 10, 15].includes(n) ? n : 1.5; } // (beta.8: more choices, half a second to 15 seconds)
-  { if (typeof ui.clipHint !== 'boolean') ui.clipHint = false; if (typeof ui.deckHint !== 'boolean') ui.deckHint = false; }
+  { if (typeof ui.clipHint !== 'boolean') ui.clipHint = false; if (typeof ui.deckHint !== 'boolean') ui.deckHint = false; if (typeof ui.leaveHint !== 'boolean') ui.leaveHint = false; if (typeof ui.deckScaled !== 'boolean') ui.deckScaled = false; }
   ui.previewDirs = [...new Set((Array.isArray(ui.previewDirs) ? ui.previewDirs : []).filter(x => typeof x === 'string' && x && x.length <= 1024))].slice(0, 20);
   ui.collections = (Array.isArray(ui.collections) ? ui.collections : []).filter(c => isObj(c) && typeof c.id === 'string' && c.id && typeof c.name === 'string').slice(0, 50)
     .map(c => ({ id: c.id.slice(0, 40), name: c.name.replace(/\s+/g, ' ').trim().slice(0, 40) || 'Collection', ids: [...new Set((Array.isArray(c.ids) ? c.ids : []).filter(x => typeof x === 'string' && x && x.length <= 1024))].slice(0, 5000) }));
@@ -210,11 +224,23 @@ function sanitize(cfg) {
     pending: [...new Set((Array.isArray(e.pending) ? e.pending : []).filter(x => typeof x === 'string' && x && x.length <= 1024))].slice(0, 40) }; }
   cfg.emuSeen = Array.isArray(cfg.emuSeen) ? [...new Set(cfg.emuSeen.filter(x => typeof x === 'string' && x && x.length <= 1024))].slice(0, 20) : [];
   for (const [k, list] of Object.entries(ONE_OF)) if (!list.includes(ui[k])) ui[k] = d[k];
-  for (const k of ['clock24', 'reduceMotion']) if (typeof ui[k] !== 'boolean') ui[k] = d[k];
-  ui.display = typeof ui.display === 'string' || typeof ui.display === 'number' ? String(ui.display).slice(0, 64) : '';
+  if (typeof ui.clock24 !== 'boolean') ui.clock24 = d.clock24;
+  // (beta.12) Reduce motion: false Off (every effect, whatever the system says), true On, 'system' Follow Windows
+  if (typeof ui.reduceMotion !== 'boolean' && ui.reduceMotion !== 'system') ui.reduceMotion = d.reduceMotion;
+  // (beta.12) Seamless play (main/seamless.js): on unless turned off; the screen mode ('' = never chosen: Start in
+  // fullscreen decides); Window mode's last place and size
+  if (typeof ui.seamless !== 'boolean') ui.seamless = true;
+  if (!['', 'full', 'window'].includes(ui.screenMode)) ui.screenMode = '';
+  { const b = ui.windowBounds; ui.windowBounds = isObj(b) && ['x', 'y', 'width', 'height'].every(k => Number.isFinite(b[k]) && Math.abs(b[k]) < 100000) && b.width >= 200 && b.height >= 150 ? { x: Math.round(b.x), y: Math.round(b.y), width: Math.round(b.width), height: Math.round(b.height) } : null; }
+  ui.display =typeof ui.display === 'string' || typeof ui.display === 'number' ? String(ui.display).slice(0, 64) : '';
   ui.audioOut = typeof ui.audioOut === 'string' ? ui.audioOut.slice(0, 512) : '';
   { const n = +ui.safeArea; ui.safeArea = Number.isFinite(n) && ui.safeArea !== null && ui.safeArea !== '' ? Math.min(100, Math.max(90, Math.round(n))) : 100; }
   { const n = +ui.attractMinutes; ui.attractMinutes = Number.isFinite(n) && n >= 1 && n <= 60 ? n : d.attractMinutes; }
+  // (beta.12) attract mode's pace (how long each box stays) and whether it wanders to other shelves
+  if (!['slow', 'normal', 'fast'].includes(ui.attractPace)) ui.attractPace = 'normal';
+  // (beta.12) Details' trailer box volume, 0-1 (its sound is turned on there each time)
+  { const n = +ui.trailerVol; ui.trailerVol = Number.isFinite(n) && n >= 0 && n <= 1 && ui.trailerVol !== null && ui.trailerVol !== '' ? n : .7; }
+  if (typeof ui.attractWander !== 'boolean') ui.attractWander = true;
   { const n = +ui.dimMinutes; ui.dimMinutes = [0, 10, 20, 30].includes(n) && ui.dimMinutes !== null && ui.dimMinutes !== '' ? n : 0; }
   // numbers the sliders and the zoom use directly (a string or null here showed NaN% and played at the wrong level)
   { const n = +ui.uiScale; ui.uiScale = [1, 1.15, 1.3].includes(n) ? n : 1; }
@@ -282,4 +308,4 @@ function sanitizeArt(a, ui) {
 // settings coming back from the screen: same shape rules as a loaded file (a missing or broken section gets its defaults)
 function normalize(c) { if (!isObj(c)) throw new Error('Not a settings object.'); return sanitize(merge(defaults(), c)); }
 
-module.exports = { init, load, save, flush, defaults, normalize, sanitize, file: () => FILE, blocked: () => readBlocked, ART, defaultArtStyle, cleanArtStyle, sanitizeArt };
+module.exports = { init, load, save, flush, defaults, normalize, sanitize, GAME_STATUS, file: () => FILE, blocked: () => readBlocked, ART, defaultArtStyle, cleanArtStyle, sanitizeArt };

@@ -15,7 +15,11 @@
   api.bottomScreen = {
     available: () => !!st.available,
     status: () => Object.assign({}, st),
-    set: on => (on ? N.bottomShow({ remember: true }) : N.bottomHide({ remember: true })).then(refresh).then(() => { if (on) sendSoon(true); })
+    set: on => (on ? N.bottomShow({ remember: true }) : N.bottomHide({ remember: true })).then(refresh).then(() => { if (on) sendSoon(true); }),
+    // (beta.12) back from a game with new achievements (app.js showUnlocks): the bottom screen shows them on its Trophies tab
+    unlocks: async list => { try { if (!st.available || !st.enabled || !Array.isArray(list) || !list.length) return;
+      const items = []; for (const a of list.slice(0, 8)) items.push({ title: String(a.title || '').slice(0, 90), points: +a.points || 0, game: String(a.gameTitle || a.game || '').slice(0, 90), badge: a.badge ? await one(String(a.badge)) : null });
+      await N.bottomPost({ msg: { type: 'unlocks', list: items, at: Date.now() } }); } catch (e) { log('unlocks failed', e && e.message); } }
   };
 
   // Not through requestIdleCallback: perf.js holds idle jobs until the shelf has been still for 1.5 s, and the bottom
@@ -39,7 +43,7 @@
       } else {
         const g = await S.bottomInfo();
         if (g) g.art = await portable(g.art || {});
-        msg = { type: 'game', game: g };
+        msg = { type: 'game', game: g, shelves: S.bottomShelves ? S.bottomShelves() : null }; // (beta.12) the Consoles tab's list
       }
       const sig = JSON.stringify(msg);
       if (sig === last) return; // nothing new (the same game settled on again)
@@ -84,13 +88,15 @@
         await N.bottomPost({ msg: Object.assign({ type: 'studio' }, m) });
       } catch (e) { log('studio send failed', e && e.message); }
       if (!m.open) sendSoon(true);
+      ctxSoon(); // (beta.12) a companion up when the studio opened (Details) steps aside, and comes back when it closes (sent only if it changed)
     }); }
   };
 
   // what the bottom screen's buttons ask for
   // (mpick / unwrap / mrow / mact / mback / mturn / mzoom / room: the museum companion; art / bsettings: the quick ways in)
   // (museum / settings: shortcuts the bottom screen's Shortcuts tab can be given, 0.3.2)
-  const CMDS = /^(play|fav|details|inspect|manual|shuffle|prev|next|ach|menu|mpick|unwrap|mrow|mact|mback|mturn|mzoom|room|art|bsettings|museum|settings)$/;
+  // (rd / find / det / sys, beta.12: the reading, Find and Details companions, and the Consoles tab)
+  const CMDS = /^(play|fav|details|inspect|manual|shuffle|prev|next|ach|menu|mpick|unwrap|mrow|mact|mback|mturn|mzoom|room|art|bsettings|museum|settings|rd|find|det|sys)$/;
   // what may come with a command: a number (a case on the row, a step), a turn ({ dx, dy }) or a room choice ({ key, val })
   function argOf(a) {
     if (a == null) return null;
@@ -106,9 +112,12 @@
   listen('bottom', e => {
     let m; try { m = JSON.parse(e && e.msg); } catch { return; }
     if (!m || typeof m !== 'object') return;
-    if (m.type === 'ready') refresh().then(() => sendSoon(true)); // a fresh bottom page (first start, or rebuilt): tell it everything
+    if (m.type === 'ready') refresh().then(() => { sendSoon(true); ctxSoon(true); }); // a fresh bottom page (first start, or rebuilt): tell it everything
     else if (m.type === 'cmd' && (m.cmd === 'scOpts' || m.cmd === 'scRun')) shortcut(m.cmd, String(m.arg == null ? '' : m.arg).slice(0, 300));
-    else if (m.type === 'cmd') run(String(m.cmd || ''), argOf(m.arg));
+    else if (m.type === 'cmd' && m.cmd === 'apps') appList();
+    else if (m.type === 'cmd' && m.cmd === 'appIcons') appIcons(Array.isArray(m.arg) ? m.arg : []);
+    else if (m.type === 'cmd' && m.cmd === 'sysAct') sysAct(String(m.arg || ''));
+    else if (m.type === 'cmd') { run(String(m.cmd || ''), argOf(m.arg)); if (/^(rd|find|det)$/.test(m.cmd)) ctxSoon(true); }
   });
   // (0.3.5) the Shortcuts tab's own buttons: an app on the device, a console's shelf, a favourite game. scOpts: the choices
   // for one kind, sent back to the bottom page; scRun: one of them pressed
@@ -118,6 +127,63 @@
     let items = []; try { items = S.shortcutOptions ? await S.shortcutOptions(arg) : []; } catch (e) { log('shortcut options', e && e.message); }
     try { await N.bottomPost({ msg: { type: 'scOpts', kind: arg, items: (items || []).slice(0, 120) } }); } catch (e) { log('shortcut options send', e && e.message); }
   }
+  // (beta.12) the Apps tab: every app on the device (names first, at once), then their icons, a few at a time, drawn by
+  // Android off the main thread and kept for the session (each icon is asked for once). Only when the tab is opened.
+  const icons = new Map();
+  async function appList() {
+    let L = []; try { L = api.androidApps ? await api.androidApps() : []; } catch (e) { log('apps', e && e.message); }
+    // (names only: the icons follow in small batches, appIcons below; a list of a few hundred icons in one message would
+    // be megabytes through the bridge)
+    const items = (L || []).slice(0, 300).map(a => ({ pkg: String(a.pkg), label: String(a.label || a.pkg).slice(0, 60) }));
+    try { await N.bottomPost({ msg: { type: 'apps', items } }); } catch (e) { log('apps send', e && e.message); }
+  }
+  let iconQ = Promise.resolve();
+  const idle = async () => { while (window.BS_BUSY && BS_BUSY()) await new Promise(r => setTimeout(r, 300)); }; // (never while the shelf slides)
+  function appIcons(want) {
+    const all = [...new Set(want.map(String))].filter(Boolean).slice(0, 300);
+    const known = all.filter(p => icons.has(p)), need = all.filter(p => !icons.has(p));
+    const post = part => { const out = {}; for (const p of part) if (icons.get(p)) out[p] = icons.get(p); return Object.keys(out).length ? N.bottomPost({ msg: { type: 'appIcons', icons: out } }).catch(() => {}) : null; };
+    // ones drawn before (a bottom page made again, or asking again): from here, a dozen at a time, no native call
+    for (let i = 0; i < known.length; i += 12) { const part = known.slice(i, i + 12); iconQ = iconQ.then(async () => { await idle(); await post(part); }); }
+    if (!N.appIcons) return;
+    for (let i = 0; i < need.length; i += 12) {
+      const part = need.slice(i, i + 12);
+      iconQ = iconQ.then(async () => {
+        await idle();
+        const r = await N.appIcons({ pkgs: part, size: 96 }).catch(() => null), got = (r && r.icons) || {};
+        for (const p of part) icons.set(p, typeof got[p] === 'string' ? got[p] : '');
+        await idle(); await post(part);
+      });
+    }
+  }
+  // the Apps tab's row of Android's own places: the home screen you had before, Settings and a few of its pages
+  function sysAct(a) {
+    const go = p => Promise.resolve(p).catch(e => { log('sysAct', a, e && e.message); try { window.Shelf && Shelf.toast && Shelf.toast(e && e.message || "Couldn't open that"); } catch {} });
+    if (a === 'home') return go(api.power ? api.power('exitHome') : null);
+    if (a === 'settings') return go(api.power ? api.power('androidSettings') : null);
+    if (/^(wifi|bluetooth|display|sound)$/.test(a) && N.openSettingsPage) return go(N.openSettingsPage({ page: a }));
+  }
+
+  // (beta.12) the companions: what the top screen shows besides the shelf (a manual or guide being read, Find, Details),
+  // sent a moment after it changes (app.js "bs-ctx") and only when it differs. Screenshots travel as addresses this page can open.
+  let ctxLast = '', ctxBusy = false, ctxAgain = false;
+  function ctxSoon(force) { if (force) ctxLast = ''; setTimeout(sendCtx, 0); }
+  async function sendCtx() {
+    if (!st.available || !st.enabled) return;
+    if (ctxBusy) { ctxAgain = true; return; }
+    ctxBusy = true;
+    try {
+      const S = window.Shelf; if (!S || !S.bottomCtx) return;
+      const c = S.bottomCtx();
+      if (c && c.kind === 'details' && Array.isArray(c.shots)) { const o = []; for (const u of c.shots) o.push(u ? await one(String(u)) : null); c.shots = o.filter(Boolean); }
+      const msg = { type: 'ctx', ctx: c || null }, sig = JSON.stringify(msg);
+      if (sig === ctxLast) return; ctxLast = sig;
+      await N.bottomPost({ msg });
+    } catch (e) { log('ctx send failed', e && e.message); }
+    finally { ctxBusy = false; if (ctxAgain) { ctxAgain = false; setTimeout(sendCtx, 0); } }
+  }
+  addEventListener('bs-ctx', () => ctxSoon());
+
   listen('bottomChange', () => refresh());
   addEventListener('bs-select', () => sendSoon());
   // (0.3.2) another theme on the top screen: the bottom screen follows (the body's theme-* class; other class changes cost a string compare)

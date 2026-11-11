@@ -16,6 +16,7 @@ import android.os.SystemClock;
 import android.util.DisplayMetrics;
 import android.util.Log;
 import android.view.Display;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewParent;
@@ -113,15 +114,15 @@ final class BottomScreen implements DisplayManager.DisplayListener {
     }
 
     // ---------- what the page can ask for ----------
-    // (0.4.0) The bottom page is on by default only on AYN's handhelds (the Thor's built-in second screen). On any other
+    // (0.4.0) The bottom page is on by default only on the AYN Thor (its built-in second screen). (beta.12) Only the Thor:
+    // AYN's other handhelds (Odin 2, Portal…) have one screen, so a second display there is a TV or a dock. On any other
     // device a second display is usually a TV, a monitor or a cast (HDMI, DeX, Miracast): left alone unless the player
     // turns the bottom screen on in Settings.
-    static boolean aynDevice() {
-        String s = (Build.MANUFACTURER + " " + Build.BRAND + " " + Build.MODEL).toLowerCase(Locale.ROOT);
-        return s.contains("ayn");
+    static boolean thorDevice() {
+        return String.valueOf(Build.MODEL).toLowerCase(Locale.ROOT).contains("thor"); // (the model only: other makers use "thor" as a code name)
     }
     static String deviceName() { return (Build.MANUFACTURER + " " + Build.MODEL).trim(); }
-    boolean enabled() { return prefs.getBoolean(PREF_ON, aynDevice()); }
+    boolean enabled() { return prefs.getBoolean(PREF_ON, thorDevice()); }
 
     /** On / off. remember = keep the choice across restarts (Settings), otherwise just for now. */
     void setEnabled(boolean on, boolean remember) {
@@ -152,7 +153,7 @@ final class BottomScreen implements DisplayManager.DisplayListener {
         r.put("enabled", enabled());
         r.put("shown", visible);
         r.put("device", deviceName());   // (0.4.0) e.g. "AYN Thor": shown in Settings so a player can tell what it saw
-        r.put("builtIn", aynDevice());   // the second screen is the handheld's own (on by default), not a TV or a cast
+        r.put("builtIn", thorDevice());  // the second screen is the handheld's own (on by default), not a TV or a cast
         if (d != null) {
             DisplayMetrics m = new DisplayMetrics();
             d.getRealMetrics(m);
@@ -165,15 +166,56 @@ final class BottomScreen implements DisplayManager.DisplayListener {
     }
 
     // ---------- showing and hiding ----------
+    // (beta.12) Which second display: the handheld's own panel, never a TV. A Thor in its dock has three displays (its two
+    // panels and the TV), and the TV is the one Android lists as a "presentation" display, so the first one found was
+    // often the TV. Each usable display is scored: built-in signs up, HDMI / USB-C / cast signs down, and on a tie the
+    // lowest id (the built-in panels are set up at boot, a plugged-in screen comes later). The name is only a hint (some
+    // makers' second panels are named like an HDMI screen), so a lone display that looks external is still used, except
+    // on the Thor when the display's own EDID says it's a plugged-in TV or monitor (sinkScore < 0): never the bottom page there.
     private Display findDisplay() {
         if (dm == null) return null;
-        for (Display d : dm.getDisplays(DisplayManager.DISPLAY_CATEGORY_PRESENTATION)) if (usable(d)) return d;
-        for (Display d : dm.getDisplays()) if (usable(d)) return d;
-        return null;
+        boolean thor = thorDevice();
+        Display best = null;
+        int bestScore = 0;
+        for (Display d : dm.getDisplays()) {
+            if (!usable(d)) continue;
+            if (thor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && Api31.sinkScore(d) < 0) continue;
+            int s = score(d);
+            if (best == null || s > bestScore || (s == bestScore && d.getDisplayId() < best.getDisplayId())) { best = d; bestScore = s; }
+        }
+        return best;
     }
 
     private static boolean usable(Display d) {
         return d != null && d.getDisplayId() != Display.DEFAULT_DISPLAY && d.isValid() && (d.getFlags() & Display.FLAG_PRIVATE) == 0;
+    }
+
+    // > 0: looks built in, < 0: looks like a TV, monitor or cast, 0: can't tell
+    private static int score(Display d) {
+        int s = 0;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) s = Api31.sinkScore(d); // what the display itself says (EDID), when it says
+        String n = String.valueOf(d.getName()).toLowerCase(Locale.ROOT);
+        if (n.contains("built-in") || n.contains("builtin") || n.contains("internal") || n.contains("内置")) s += 1; // (the last: Chinese for "built in")
+        if (n.contains("hdmi") || n.contains("displayport") || n.contains("usb") || n.contains("external") || n.contains("wifi")
+                || n.contains("wi-fi") || n.contains("wireless") || n.contains("miracast") || n.contains("cast") || n.contains("overlay")
+                || n.contains("virtual")) s -= 4;
+        return s;
+    }
+
+    // Display.getDeviceProductInfo (Android 12+), kept in a class of its own so older Androids never load it
+    @TargetApi(Build.VERSION_CODES.S)
+    private static final class Api31 {
+        static int sinkScore(Display d) {
+            try {
+                android.hardware.display.DeviceProductInfo p = d.getDeviceProductInfo();
+                if (p == null) return 0;
+                int t = p.getConnectionToSinkType();
+                if (t == android.hardware.display.DeviceProductInfo.CONNECTION_TO_SINK_BUILT_IN) return 2;
+                if (t == android.hardware.display.DeviceProductInfo.CONNECTION_TO_SINK_DIRECT
+                        || t == android.hardware.display.DeviceProductInfo.CONNECTION_TO_SINK_TRANSITIVE) return -4;
+            } catch (RuntimeException ignored) {}
+            return 0;
+        }
     }
 
     private void showIfWanted() {
@@ -234,13 +276,21 @@ final class BottomScreen implements DisplayManager.DisplayListener {
     }
 
     // ---------- screens coming and going ----------
+    // (beta.12) a screen plugged in while the page is up moves it only when the new one is the better choice (findDisplay:
+    // a TV never takes it from the built-in panel); the page's own screen going away tries the others
     @Override
-    public void onDisplayAdded(int displayId) { if (screen == null) showIfWanted(); }
+    public void onDisplayAdded(int displayId) {
+        Screen s = screen;
+        if (s == null) { showIfWanted(); return; }
+        Display d;
+        try { d = findDisplay(); } catch (RuntimeException e) { d = null; }
+        if (d != null && d.getDisplayId() != s.getDisplay().getDisplayId()) showIfWanted();
+    }
 
     @Override
     public void onDisplayRemoved(int displayId) {
         Screen s = screen;
-        if (s != null && s.getDisplay().getDisplayId() == displayId) { dropScreen(); listener.onChange(); }
+        if (s != null && s.getDisplay().getDisplayId() == displayId) { dropScreen(); listener.onChange(); showIfWanted(); }
     }
 
     @Override
@@ -265,8 +315,10 @@ final class BottomScreen implements DisplayManager.DisplayListener {
             super.onCreate(savedInstanceState);
             Window w = getWindow();
             if (w != null) {
+                // (beta.12) no FLAG_KEEP_SCREEN_ON of its own: MainActivity keeps the screen on while Boxshelf is used,
+                // and a touch here counts as use (dispatchTouchEvent below)
                 w.addFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
-                        | WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON | WindowManager.LayoutParams.FLAG_FULLSCREEN);
+                        | WindowManager.LayoutParams.FLAG_FULLSCREEN);
                 w.setBackgroundDrawable(new ColorDrawable(BG));
                 // the whole panel, edge to edge: no strip kept for system bars or a cutout (on the Thor the page left
                 // black bands at the bottom and the side)
@@ -309,6 +361,12 @@ final class BottomScreen implements DisplayManager.DisplayListener {
             setContentView(v, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
             hideBars(w);
             v.loadUrl(PAGE);
+        }
+
+        @Override
+        public boolean dispatchTouchEvent(MotionEvent ev) {
+            if (activity instanceof MainActivity) ((MainActivity) activity).noteInput(); // (the main thread: input arrives there)
+            return super.dispatchTouchEvent(ev);
         }
 
         @SuppressWarnings("deprecation")

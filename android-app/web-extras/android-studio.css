@@ -1,7 +1,7 @@
 /* The handheld Art Studio (android-studio.js; Android build only). Laid out for the 1440 x 810 Android page: text never
    under 14 px, every touch target at least 48 px. Moving around only changes transforms, opacity and a few classes. */
 #bsStudio{--acc:#9d8cff;--ink:#f3f5fb;--dim:rgba(243,245,251,.66);--faint:rgba(243,245,251,.42);--line:rgba(255,255,255,.1);--ok:#5fe0a0;
-  position:fixed;inset:0;z-index:60;color:var(--ink);font-family:'Lexend',system-ui,sans-serif;
+  position:fixed;inset:0;z-index:60;color:var(--ink);font-family:'Mona Sans',system-ui,sans-serif;
   background:radial-gradient(70% 60% at 18% 0%,color-mix(in srgb,var(--acc) 22%,transparent),transparent 70%),#07080e;
   opacity:0;visibility:hidden;transition:opacity .22s ease,visibility 0s .22s;-webkit-user-select:none;user-select:none;touch-action:none}
 #bsStudio.on{opacity:1;visibility:visible;transition:opacity .22s ease,visibility 0s}
@@ -12,7 +12,7 @@ body.bst-full>:not(#bsStudio):not(#thorHud):not(#bsDim):not(#bsBottomPreview):no
 #bsStudio button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer;-webkit-tap-highlight-color:transparent}
 #bsStudio svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}
 #bsStudio kbd{display:inline-grid;place-items:center;min-width:28px;height:28px;padding:0 6px;border-radius:14px;background:rgba(255,255,255,.14);
-  font:700 14px/1 'Lexend',sans-serif;color:#fff;margin-right:9px}
+  font:700 14px/1 'Mona Sans',sans-serif;color:#fff;margin-right:9px}
 
 /* header: back, which game, and a line that says what just happened */
 .bst-head{position:absolute;left:28px;right:28px;top:20px;height:68px;display:flex;align-items:center;gap:18px}
@@ -70,6 +70,11 @@ body.bst-full>:not(#bsStudio):not(#thorHud):not(#bsDim):not(#bsBottomPreview):no
 .bst-card .im img{position:absolute;inset:0;margin:auto;max-width:100%;max-height:100%;opacity:0;transition:opacity .25s}
 .bst-card .im img.on{opacity:1}
 .bst-card.disc .im img,.bst-bigin.disc img{height:100%;max-height:100%;width:auto;aspect-ratio:1;object-fit:cover;border-radius:50%}
+/* (beta.12) a console whose games come on a cartridge, a UMD or a floppy: its pictures shown whole, never cut into a disc's circle */
+#bsStudio.bst-cart .bst-mini.disc{width:58px;height:70px;border-radius:8px;background-color:transparent;background-size:contain}
+#bsStudio.bst-cart .bst-row:not(.on) .bst-mini.disc{width:42px;height:50px}
+#bsStudio.bst-cart .bst-card.disc .im img,#bsStudio.bst-cart .bst-bigin.disc img{width:auto;height:auto;max-width:100%;max-height:100%;aspect-ratio:auto;object-fit:contain;border-radius:6px}
+#bsStudio.bst-cart .bst-card .dsc{border-radius:8px;background-color:transparent;background-size:contain}
 .bst-card .ph{position:absolute;inset:0;background:linear-gradient(100deg,transparent 30%,rgba(255,255,255,.07) 50%,transparent 70%) 0 0/300% 100%;animation:bstWait 1.3s linear infinite}
 @keyframes bstWait{to{background-position:-150% 0}}
 .bst-row:not(.on) .bst-card .ph{animation:none}

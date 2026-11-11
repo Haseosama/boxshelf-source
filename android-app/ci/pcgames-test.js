@@ -141,6 +141,13 @@ module.exports = async function pcGamesPass({ browser, base, check, newPage }) {
       for (let i = 0; i < 40 && Shelf.getMode() !== 'browse'; i++) await w(250); // (Settings opens from the shelf only)
       Setup.open({ page: 'pc' }); for (let i = 0; i < 40 && !document.querySelector('#bss.on .bss-row'); i++) await w(150); await w(600);
       out.pcPage = names();
+      // (beta.12) PC games points the way to Custom games (where Playnite and decomps are)
+      if (row('Other PC games')) { row('Other PC games').click(); await w(700); out.otherTo = (document.querySelector('#bss .bss-title') || {}).textContent || ''; }
+      // Settings' search finds them by name: typed letters search
+      const typed = async q => { for (const ch of q) { document.dispatchEvent(new KeyboardEvent('keydown', { key: ch, bubbles: true })); await w(30); } await w(400); const r = names().slice(0, 12);
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); await w(200); document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); await w(300); return r; };
+      out.findPn = await typed('playnite'); out.findDecomp = await typed('decomp');
+      out.hasPn = !!(window.boxshelf && window.boxshelf.playnitePlan);
       if (window.Settings && Settings.isOpen && Settings.isOpen()) { await Settings.close(); await w(800); }
       Setup.open({ page: 'custom' }); for (let i = 0; i < 40 && !row('Add games'); i++) await w(150); await w(800); // (beta.7: Add games, a page of its own)
       out.page = names(); out.quiverRow = (row('Quiver Launcher') || {}).textContent || '';
@@ -151,7 +158,12 @@ module.exports = async function pcGamesPass({ browser, base, check, newPage }) {
       out.removed = (await cfg()).custom;
       if (window.Settings && Settings.isOpen && Settings.isOpen()) { await Settings.close(); await w(800); } return out; });
     check('PC games (Windows): Settings → PC games has the Epic switch; Custom games has Quiver and Add games',
-      st.pcPage.includes('Show installed Epic Games') && st.page.includes("Show Quiver's games") && st.page.includes('Add games') && /Found/.test(st.quiverRow), JSON.stringify({ pc: st.pcPage, page: st.page, q: st.quiverRow }).slice(0, 500));
+      st.pcPage.includes('Show installed Epic Games') && st.page.includes("Show Quiver Launcher's games") && st.page.includes('Add games') && /Found/.test(st.quiverRow), JSON.stringify({ pc: st.pcPage, page: st.page, q: st.quiverRow }).slice(0, 500));
+    check('Custom games (beta.12): every way in is on the page itself (Playnite, programs for decomps and ports, a folder, Quiver); PC games points there; search finds Playnite and decomps',
+      st.page.includes('Add programs') && st.page.includes('Scan a folder of games') && (!st.hasPn || st.page.includes('Import from Playnite (experimental)')) &&
+      st.pcPage.includes('Other PC games') && /Custom games/.test(st.otherTo || '') &&
+      (!st.hasPn || st.findPn.includes('Import from Playnite (experimental)')) && st.findDecomp.includes('Add programs'),
+      JSON.stringify({ page: st.page.slice(0, 8), other: st.otherTo, pn: st.findPn, decomp: st.findDecomp, hasPn: st.hasPn }).slice(0, 600));
     check('PC games (Windows): Add games → Add one program puts it on the Custom shelf named from its file; Remove (pressed twice) takes it off',
       (st.added || []).length === 1 && st.added[0].title === 'program' && /program\.exe$/.test(st.added[0].exe) && st.after.includes('program') && (st.removed || []).length === 0, JSON.stringify({ added: st.added, removed: st.removed }).slice(0, 400));
     // (beta.5) a PC game's cover picker: Details → Box art opens it with the options (SteamGridDB's, a picture of yours);
@@ -271,4 +283,46 @@ module.exports = async function pcGamesPass({ browser, base, check, newPage }) {
     check('Big library pass: no script errors', !big.errors.length, big.errors.slice(0, 3).join(' | '));
   } catch (e) { check('Big library pass ran to the end', false, e && e.stack ? e.stack.split('\n').slice(0, 2).join(' ') : e); }
   await big.ctx.close();
+
+  // (beta.12) a cover chosen for a custom game sticks on its case: a Quiver game (it has an icon, so its case starts from a
+  // cover drawn from the icon) and a game added by hand, each picked once and then picked again. The scan is wrapped so a
+  // chosen cover comes back as its art.front, as main does, and the shelf hears library:changed as it does from main
+  const cs = await newPage(browser);
+  try {
+    await cs.page.addInitScript(() => {
+      const svg = (c, t) => 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="200" height="300"><rect width="200" height="300" fill="${c}"/><text x="10" y="150">${t}</text></svg>`);
+      window.__libFns = []; let real;
+      Object.defineProperty(window, 'boxshelf', { configurable: true, get() { return real; }, set(v) { real = v;
+        const scan = v.scan; v.scan = async (...a) => { const out = await scan(...a); const cu = out.find(s => s.id === 'custom');
+          if (cu) { if (!cu.games.some(g => g.id === 'custom-moon')) cu.games.push({ kind: 'steam', source: 'custom', id: 'custom-moon', title: 'Moon Forge', art: {} });
+            for (const g of cu.games) { if (g.id === 'quiver-quarantine') g.art.icon = svg('#808', 'ICON'); const k = (window.__pcCovers || {})[g.id]; if (k) g.art.front = svg('#0a0', 'CHOSEN-' + k); } }
+          return out; };
+        v.scanIfChanged = () => v.scan();
+        const on = v.onLibraryChanged; v.onLibraryChanged = fn => { window.__libFns.push(fn); on && on(fn); };
+        const use = v.pcCoverUse; v.pcCoverUse = async (id, key) => { const r = await use(id, key); setTimeout(() => window.__libFns.forEach(f => f({ pcCover: 1 })), 700); return r; };
+      } });
+    });
+    await cs.page.goto(base + '?platform=windows&shelf=1&pcx=1');
+    await cs.page.waitForFunction(() => window.Shelf && Shelf._qs && Shelf._qs().g, null, { timeout: 90000, polling: 250 });
+    const st = await cs.page.evaluate(async () => {
+      const w = ms => new Promise(r => setTimeout(r, ms)), key = k => document.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true }));
+      for (let i = 0; i < 40 && Shelf.getMode() !== 'browse'; i++) await w(250);
+      const word = () => ((document.getElementById('sysWord') || {}).textContent || '').trim();
+      for (let i = 0; i < 20 && !/^Custom/.test(word()); i++) { key('ArrowDown'); await w(500); } await w(1500);
+      const shown = n => { const el = [...document.querySelectorAll('.slot')].find(s => ((s.querySelector('.spine-title') || {}).textContent || '') === n), im = el && el.querySelector('.f-front img');
+        const m = im && /CHOSEN-\w+/.exec(decodeURIComponent(im.getAttribute('src') || '')); return m ? m[0] : 'other'; };
+      const pick = async n => { key('i'); await w(900); const b = document.getElementById('dBoxArtPc'); if (b) b.click(); await w(900);
+        for (let i = 0; i < n; i++) { key('ArrowRight'); await w(150); } key('Enter'); await w(4000); };
+      const o = { shelf: word() };
+      const go = async t => { for (let i = 0; i < 6 && Shelf._qs().g !== t; i++) { key(Shelf._qs().g === 'Quarantine' ? 'ArrowRight' : 'ArrowLeft'); await w(900); } };
+      await go('Quarantine'); await pick(0); o.q1 = shown('Quarantine');
+      await go('Moon Forge'); await pick(0); o.m1 = shown('Moon Forge');
+      await pick(1); o.m2 = shown('Moon Forge');
+      await go('Quarantine'); await pick(1); o.q2 = shown('Quarantine');
+      return o; });
+    check('Custom games (beta.12): a chosen cover shows on the case at once and again when another is chosen, for a Quiver game (with an icon) and one added by hand',
+      st.q1 === 'CHOSEN-sg0' && st.m1 === 'CHOSEN-sg0' && st.m2 === 'CHOSEN-sg1' && st.q2 === 'CHOSEN-sg1', JSON.stringify(st));
+    check('Custom cover pass: no script errors', !cs.errors.length, cs.errors.slice(0, 3).join(' | '));
+  } catch (e) { check('Custom cover pass ran to the end', false, e && e.stack ? e.stack.split('\n').slice(0, 2).join(' ') : e); }
+  await cs.ctx.close();
 };

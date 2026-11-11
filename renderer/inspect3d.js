@@ -21,7 +21,7 @@ window.Inspect3D = (() => {
     try {
       canvas = document.createElement('canvas'); canvas.className = 'isp-gl';
       renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true, powerPreference: 'high-performance' });
-    } catch (e) { failed = true; return false; }
+    } catch (e) { failed = true; setTimeout(() => { failed = false; }, 30000); return false; } /* (beta.12: tried again in 30 s, not off until a restart) */
     // Neutral tone mapping keeps the cover's colours as printed (ACES lifted and desaturated them into a milky wash);
     // only real highlights get compressed. Lights are balanced so a white sleeve facing you sits at ~1.0.
     renderer.outputColorSpace = THREE.SRGBColorSpace; renderer.toneMapping = THREE.NeutralToneMapping; renderer.toneMappingExposure = 1;
@@ -174,10 +174,14 @@ window.Inspect3D = (() => {
     const p = new Promise(res => { const im = new Image(); im.crossOrigin = 'anonymous'; im.decoding = 'async'; let late = false; const to = setTimeout(() => { late = true; crops.delete(url); res(null); }, 8000); /* slow: give up now, try again next time */
       im.onload = () => { clearTimeout(to); if (late) return; try { const r = coverRect(im, false); if (!r || (r.u0 === 0 && r.u1 === 1 && r.v0 === 0 && r.v1 === 1)) return res(null);
         const iw = im.naturalWidth, ih = im.naturalHeight, sx = r.u0 * iw, sy = (1 - r.v1) * ih, sw = (r.u1 - r.u0) * iw, sh = (r.v1 - r.v0) * ih, k = Math.min(1, 1800 / sh);
-        const c = document.createElement('canvas'); c.width = Math.round(sw * k); c.height = Math.round(sh * k); c.getContext('2d').drawImage(im, sx, sy, sw, sh, 0, 0, c.width, c.height);
+        const c = document.createElement('canvas'); c.width = Math.round(sw * k); c.height = Math.round(sh * k); c.getContext('2d', { willReadFrequently: true }).drawImage(im, sx, sy, sw, sh, 0, 0, c.width, c.height);
         c.toBlob(b => { c.width = c.height = 0; res(b ? URL.createObjectURL(b) : null); }, 'image/jpeg', .9); } catch { res(null); } };
       im.onerror = () => { clearTimeout(to); res(null); }; im.src = url; });
-    crops.set(url, p); if (crops.size > 40) crops.delete(crops.keys().next().value); return p;
+    // (the crop is read back as a JPEG: a canvas kept in memory, not on the GPU. The oldest crop's picture is let go a
+    // minute after it leaves the cache, so a reader still showing it keeps it)
+    crops.set(url, p);
+    if (crops.size > 40) { const k0 = crops.keys().next().value, p0 = crops.get(k0); crops.delete(k0); p0.then(u => { if (u) setTimeout(() => URL.revokeObjectURL(u), 60000); }); }
+    return p;
   }
   // put that rectangle on a manual plane, sized to fit maxW x maxH without stretching
   function fitCover(mesh, r, maxW, maxH) { if (!r) return; const uv = mesh.geometry.attributes.uv; for (let i = 0; i < uv.count; i++) uv.setXY(i, Math.round(uv.getX(i)) ? r.u1 : r.u0, Math.round(uv.getY(i)) ? r.v1 : r.v0); uv.needsUpdate = true;
@@ -594,12 +598,27 @@ window.Inspect3D = (() => {
   function setPose(rx, ry, zoom, px, py, busy, flip, base) { if (busy) lastMove = performance.now(); st.rx = rx; st.ry = ry; st.zoom = zoom; st.px = px; st.py = py; st.flip = flip || 0; st.own = base != null; st.base = base || 0; } // (base null: Windows, the disc turns with the case as before)
   function setState(n) { st.state = n; applyState(false); }
   function bump() { st.bump = .12; }
+  // (beta.12, touch) what's under a finger on the screen: 'manual' (the booklet in the lid), 'disc' (the disc or
+  // cartridge), or null (the case itself, or nothing). Whatever is nearest along the line of sight wins, so a case wall in
+  // front of the manual keeps it. Once per tap, never per frame
+  function hitAt(x, y) {
+    if (!active || !renderer || !camera || !canvas || !scene) return null;
+    const THREE = T(), r = canvas.getBoundingClientRect(); if (!r.width || !r.height) return null;
+    const rc = new THREE.Raycaster(); rc.setFromCamera(new THREE.Vector2((x - r.left) / r.width * 2 - 1, -((y - r.top) / r.height) * 2 + 1), camera);
+    scene.updateMatrixWorld(true);
+    const hits = rc.intersectObjects([caseG, mediaG].filter(Boolean), true).filter(h => h.object.visible !== false);
+    for (let o = hits.length ? hits[0].object : null; o; o = o.parent) { if (o === manualPlane) return 'manual'; if (media && o === media) return 'disc'; }
+    return null;
+  }
   function setPaused(p) { paused = !!p; if (!paused && active && !raf && renderer) { lastT = 0; raf = requestAnimationFrame(frame); } }
   addEventListener('resize', () => { if (renderer && active) resize(); });
   // the lid's manual, when it arrives late (Boxshelf's own booklet is drawn after the case opens)
   function setManual(url) { if (!manualPlane || !url || (cur && cur.manual)) return; const m = manualPlane.material, t = loadTex(url); m.map = t; m.color.set(0xffffff); m.needsUpdate = true; if (cur) cur.manual = url; }
-  return { setManual, kit: { interiorTexture, discBackTexture, discLift, coverRect, fitCover, coverCrop }, available, open, close, leave, setPose, setState, bump, setPaused, isActive: () => active,
-    busy: () => !paused && (phase === 'out' || phase === 'fade' || phase === 'wait' || phase === 'in'), _st: () => ({ phase, in: st.in, ry: st.ry, rotY: rot ? Math.round(rot.rotation.y / DEG) : null, ready, fade: !!fadeT0, pend: !!pend, op: canvas && canvas.style.opacity, on: !!(canvas && canvas.classList.contains('on')), from: cur && cur.from, standIn: !!standInTex, tok, disc: discPose(), spine: !!(spineM && spineM.parent && spineM.parent.parent) }) }; // (beta.11 spine: the printed spine is on the case)
+  return { setManual, kit: { interiorTexture, discBackTexture, discLift, coverRect, fitCover, coverCrop }, available, open, close, leave, setPose, setState, bump, hitAt, setPaused, isActive: () => active,
+    busy: () => !paused && (phase === 'out' || phase === 'fade' || phase === 'wait' || phase === 'in'), _st: () => ({ phase, in: st.in, ry: st.ry, rotY: rot ? Math.round(rot.rotation.y / DEG) : null, ready, fade: !!fadeT0, pend: !!pend, op: canvas && canvas.style.opacity, on: !!(canvas && canvas.classList.contains('on')), from: cur && cur.from, standIn: !!standInTex, tok, disc: discPose(), manual: manualXY(), spine: !!(spineM && spineM.parent && spineM.parent.parent) }) }; // (beta.11 spine: the printed spine is on the case)
+  // (test hook) where on the screen the middle of the lid's manual is, in page pixels (null when it isn't drawn)
+  function manualXY() { if (!manualPlane || !camera || !canvas) return null; const THREE = T(); scene.updateMatrixWorld(true); const p = manualPlane.getWorldPosition(new THREE.Vector3()).project(camera), r = canvas.getBoundingClientRect();
+    return { x: Math.round(r.left + (p.x + 1) / 2 * r.width), y: Math.round(r.top + (1 - p.y) / 2 * r.height) }; }
   // (test hook) where the disc / cartridge is in the scene, and which way its face points
   function discPose() { if (!media) return null; const THREE = T(); media.updateWorldMatrix(true, false); const p = media.getWorldPosition(new THREE.Vector3()), n = new THREE.Vector3(0, 0, 1).transformDirection(media.matrixWorld); return { x: +p.x.toFixed(3), y: +p.y.toFixed(3), z: +p.z.toFixed(3), nz: +n.z.toFixed(3) }; }
 })();

@@ -146,7 +146,7 @@ module.exports = async function betaPass({ browser, base, check, newPage, OUT })
       const btn = () => ({ pressed: false, touched: false, value: 0 });
       const pad = { id: 'Wireless Gamepad (STANDARD GAMEPAD Vendor: 057e Product: 2009)', index: 0, connected: true, mapping: 'standard', timestamp: 0, axes: [0, 0, 0, 0], buttons: Array.from({ length: 18 }, btn) };
       Object.defineProperty(navigator, 'getGamepads', { configurable: true, value: () => [pad, null, null, null] }); window.dispatchEvent(Object.assign(new Event('gamepadconnected'), { gamepad: pad }));
-      const press = async (i) => { pad.buttons[i] = { pressed: true, touched: true, value: 1 }; pad.timestamp++; await w(250); pad.buttons[i] = btn(); pad.timestamp++; await w(450); };
+      const press = async (i) => { if (window.__padHold) { await __padHold(pad, i, 250); await w(450); return; } pad.buttons[i] = { pressed: true, touched: true, value: 1 }; pad.timestamp++; await w(250); pad.buttons[i] = btn(); pad.timestamp++; await w(450); };
       const cur = () => ((document.querySelector('#bss .bss-row.cur .nm') || {}).textContent || '');
       await press(12); Setup.open({ page: 'pad' }); for (let i = 0; i < 40 && !document.querySelector('#bss.on .bss-row'); i++) await w(150); await w(800);
       for (let i = 0; i < 8 && cur() !== 'Button prompts'; i++) await press(13);
@@ -208,9 +208,11 @@ module.exports = async function betaPass({ browser, base, check, newPage, OUT })
       const pad = { id: 'Xbox Wireless Controller (STANDARD GAMEPAD Vendor: 045e Product: 0b13)', index: 0, connected: true, mapping: 'standard', timestamp: 0, axes: [0, 0, 0, 0], buttons: Array.from({ length: 17 }, btn) };
       Object.defineProperty(navigator, 'getGamepads', { configurable: true, value: () => [pad, null, null, null] }); window.dispatchEvent(Object.assign(new Event('gamepadconnected'), { gamepad: pad }));
       await w(600); // (the pad at rest first: input still held from before Settings closed is ignored on purpose)
-      const seen = new Set(), tops = []; let on = true; (function f() { tops.push(Math.round(d.scrollTop)); const e = d.querySelector('.pad-focus'); if (e) seen.add(e.id || e.textContent.trim().slice(0, 20)); if (on) requestAnimationFrame(f); })();
+      // (beta.12: a jump is a big move between frames that came close together; on a slow machine (GitHub's software
+      // drawing) frames are far apart and a smooth glide covers more ground between two of them)
+      const seen = new Set(), tops = [], ts = []; let on = true; (function f() { tops.push(Math.round(d.scrollTop)); ts.push(performance.now()); const e = d.querySelector('.pad-focus'); if (e) seen.add(e.id || e.textContent.trim().slice(0, 20)); if (on) requestAnimationFrame(f); })();
       pad.axes[1] = 1; pad.timestamp++; await w(2500); pad.axes[1] = 0; pad.timestamp++; await w(800); on = false;
-      out.steps = seen.size; out.distinct = new Set(tops).size; let jumps = 0; for (let i = 1; i < tops.length; i++) if (Math.abs(tops[i] - tops[i - 1]) > 120) jumps++; out.jumps = jumps;
+      out.steps = seen.size; out.distinct = new Set(tops).size; let jumps = 0; for (let i = 1; i < tops.length; i++) if (Math.abs(tops[i] - tops[i - 1]) > 120 && ts[i] - ts[i - 1] < 40) jumps++; out.jumps = jumps;
       const e = d.querySelector('.pad-focus'); if (e) { const a = e.getBoundingClientRect(), q = d.getBoundingClientRect(); out.inView = a.top >= q.top - 1 && a.bottom <= q.bottom + 1; }
       try { delete navigator.getGamepads; } catch (x) {} key('Escape'); await w(600); return out; });
     check('Beta (Windows): in Details a held stick keeps stepping and the panel glides to each item (no jumps), the item in view',

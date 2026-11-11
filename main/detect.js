@@ -7,6 +7,15 @@ const { expand, isFile, isDir, readDir, findFile, appRoot } = require('./paths')
 // (1.82) Each folder searched is listed once, two folders deep, and every console and app looks its program names up in
 // that list: the same answer as findFile (the first match, breadth first), without walking the Desktop, Downloads and
 // Documents again for each of a dozen consoles while the setup window waits.
+// (beta.12, Linux) what a folder entry really is: Flatpak puts its programs in exports/bin as links (org.libretro.RetroArch
+// -> ../app/...), EmuDeck links folders too; a link was neither a file nor a folder here, so every Flatpak emulator was
+// missed. Windows keeps its own answer (junctions aren't followed there)
+const LINKS = process.platform !== 'win32';
+function kind(full, ent) {
+  if (ent.isFile()) return 'file'; if (ent.isDirectory()) return 'dir';
+  if (LINKS && ent.isSymbolicLink()) { try { const s = require('fs').statSync(full); return s.isFile() ? 'file' : s.isDirectory() ? 'dir' : ''; } catch { return ''; } }
+  return '';
+}
 function makeIndex() {
   const cache = new Map();
   return dir => {
@@ -15,9 +24,9 @@ function makeIndex() {
     while (queue.length) {
       const [d, depth] = queue.shift();
       for (const ent of readDir(d)) {
-        const full = path.join(d, ent.name);
-        if (ent.isFile()) { const k = ent.name.toLowerCase(); if (!m.has(k)) m.set(k, { full, seq: seq++ }); }
-        else if (ent.isDirectory() && depth < 2 && !ent.name.startsWith('.')) queue.push([full, depth + 1]);
+        const full = path.join(d, ent.name), k0 = kind(full, ent);
+        if (k0 === 'file') { const k = ent.name.toLowerCase(); if (!m.has(k)) m.set(k, { full, seq: seq++ }); }
+        else if (k0 === 'dir' && depth < 2 && !ent.name.startsWith('.')) queue.push([full, depth + 1]);
       }
     }
     cache.set(key, m); return m;
@@ -69,11 +78,11 @@ function findRomDirs(sys) {
     if (!isDir(root)) continue;
     const candidates = [root];
     for (const ent of readDir(root)) {
-      if (ent.isDirectory() && ROM_ROOT_NAMES.includes(ent.name.toLowerCase())) candidates.push(path.join(root, ent.name));
+      if (kind(path.join(root, ent.name), ent) === 'dir' && ROM_ROOT_NAMES.includes(ent.name.toLowerCase())) candidates.push(path.join(root, ent.name));
     }
     for (const c of candidates) {
       for (const ent of readDir(c)) {
-        if (ent.isDirectory() && sys.romFolderNames.includes(ent.name.toLowerCase())) found.add(path.join(c, ent.name));
+        if (kind(path.join(c, ent.name), ent) === 'dir' && sys.romFolderNames.includes(ent.name.toLowerCase())) found.add(path.join(c, ent.name)); // (a linked folder counts: EmuDeck's roms on an SD card)
       }
     }
   }

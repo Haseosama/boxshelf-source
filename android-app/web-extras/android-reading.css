@@ -2,7 +2,7 @@
    1920 x 1080 top screen): text never under 14 px, touch targets at least 48 px. Moving the cursor changes classes and
    transforms only; covers fade in once loaded. */
 #bsReading{--acc:#f2b84b;--acc2:rgba(242,184,75,.22);--ink:#f5f2ea;--dim:rgba(245,242,234,.68);--faint:rgba(245,242,234,.44);--line:rgba(255,255,255,.1);--ok:#6fe3a8;--bad:#ff8f80;
-  position:fixed;inset:0;z-index:61;color:var(--ink);font-family:'Lexend',system-ui,sans-serif;
+  position:fixed;inset:0;z-index:61;color:var(--ink);font-family:'Mona Sans',system-ui,sans-serif;
   background:radial-gradient(60% 55% at 10% 0%,rgba(242,184,75,.15),transparent 70%),radial-gradient(45% 50% at 100% 100%,rgba(122,96,255,.11),transparent 70%),#0a0910;
   opacity:0;visibility:hidden;transition:opacity .22s ease,visibility 0s .22s;-webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent}
 #bsReading.on{opacity:1;visibility:visible;transition:opacity .22s ease,visibility 0s}
@@ -12,7 +12,7 @@ body.brd-full>:not(#bsReading):not(#thorHud):not(#bsDim):not(#bsBottomPreview):n
 .platform-android #musFind{display:none!important}
 :where(#bsReading) button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer;-webkit-tap-highlight-color:transparent}
 #bsReading svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}
-#bsReading kbd{display:inline-grid;place-items:center;min-width:28px;height:28px;padding:0 7px;border-radius:14px;background:rgba(255,255,255,.14);font:700 14px/1 'Lexend',sans-serif;color:#fff;margin-right:8px;flex:none}
+#bsReading kbd{display:inline-grid;place-items:center;min-width:28px;height:28px;padding:0 7px;border-radius:14px;background:rgba(255,255,255,.14);font:700 14px/1 'Mona Sans',sans-serif;color:#fff;margin-right:8px;flex:none}
 
 /* header: back, the title, the search box and which kind it searches */
 .brd-head{position:absolute;left:28px;right:28px;top:16px;height:66px;display:flex;align-items:center;gap:18px}
@@ -23,7 +23,7 @@ body.brd-full>:not(#bsReading):not(#thorHud):not(#bsDim):not(#bsBottomPreview):n
 .brd-title{margin:2px 0 0;font-size:30px;font-weight:700;line-height:1.15;white-space:nowrap}
 .brd-search{flex:0 1 470px;min-width:300px;height:56px;border-radius:28px;background:rgba(255,255,255,.07);border:1px solid var(--line);display:flex;align-items:center;gap:12px;padding:0 10px 0 20px;transition:border-color .15s,box-shadow .15s,background .15s}
 .brd-search svg{flex:none;color:var(--dim)}
-.brd-input{flex:1;min-width:0;height:100%;background:none;border:0;outline:0;color:var(--ink);font:500 19px 'Lexend',sans-serif;-webkit-user-select:text;user-select:text}
+.brd-input{flex:1;min-width:0;height:100%;background:none;border:0;outline:0;color:var(--ink);font:500 19px 'Mona Sans',sans-serif;-webkit-user-select:text;user-select:text}
 .brd-input::placeholder{color:var(--faint)}
 .brd-input::-webkit-search-cancel-button{display:none}
 .brd-yk{opacity:.8}

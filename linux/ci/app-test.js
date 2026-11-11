@@ -19,8 +19,9 @@ const ra = mk('.local/bin/retroarch', `#!/bin/sh\nfor a in "$@"; do echo "$a"; d
 const core = mk('.config/retroarch/cores/snes9x_libretro.so', 'x');
 const rom = mk('Emulation/roms/snes/Test Game (USA).sfc', 'x');
 mk('Boxshelf/data/config.json', JSON.stringify({ setupDone: true,
-  // lastSeenVersion: this version's What's new already seen (beta.7: its card would take the keys this test presses)
-  ui: { bootIntro: 'off', sound: false, music: 'off', startFullscreen: true, openInto: 'last', autoCovers: false, lastSeenVersion: require('../../package.json').version },
+  // lastSeenVersion: this version's What's new already seen (beta.7: its card would take the keys this test presses);
+  // leaveHint: the "Leaving a game" card already read too (beta.12: it shows ~13 s in, when this test presses Play)
+  ui: { bootIntro: 'off', sound: false, music: 'off', startFullscreen: true, openInto: 'last', autoCovers: false, lastSeenVersion: require('../../package.json').version, leaveHint: true },
   steam: { enabled: false }, pc: { epic: false, quiver: false, custom: [] },
   systems: { snes: { enabled: true, emulator: ra, romDirs: [path.dirname(rom)] } } }, null, 2));
 

@@ -16,6 +16,7 @@ const SUFFIX = { front: '', back: '-back', spine: '-spine', disc: '-disc' };
 const CACHE_CAP = 300 * 1024 * 1024; // data\art-cand: downloaded candidates (the picker's thumbnails come from these), oldest-used go first
 const CACHE_DAYS = 45;
 const LIST_MAX = 300; // candidate lists remembered (per game + part): a key the screen sends must be one of these
+const LIST_REUSE_MS = 5 * 60e3; // (beta.12) the picker opening a part again within this long uses the list it has
 const sha = s => crypto.createHash('sha1').update(String(s)).digest('hex');
 const yieldNow = () => new Promise(r => setImmediate(r));
 
@@ -296,16 +297,20 @@ async function listFor(g, part, opts = {}) {
   const lk = g.key + '|' + part, have = lists.get(lk);
   if (have && !opts.fresh) { lists.delete(lk); lists.set(lk, have); return have; } // most recently used last (the map is the LRU)
   const style = styleFor(cfg(), g.sysId);
-  const [remote, sg, ss] = await Promise.all([covers.candidates(g.sysId, g.game, part, { region: style.region, lrWait: opts.lrWait }), sgCands(g, part, opts), ssCands(g, part, opts)]);
-  remote.push(...sg, ...ss);
+  // the three kinds of source are asked at once: the lists (LaunchBox, GameTDB, libretro), SteamGridDB, ScreenScraper.
+  // (beta.12) opts.firstWait (the picker): the list goes back once that long has passed, with the sources that answered;
+  // a later one is added to this list when it answers (addLate), so the screen never waits for the slowest
+  const t0 = Date.now(), ms = {}, NAMES = ['lists', 'steamgriddb', 'screenscraper'], got = [null, null, null], errs = [];
+  const P = [covers.candidates(g.sysId, g.game, part, { region: style.region, lrWait: opts.lrWait }), sgCands(g, part, opts), ssCands(g, part, opts)]
+    .map((p, i) => Promise.resolve(p).then(v => { got[i] = v || []; ms[NAMES[i]] = Date.now() - t0; return v; }, e => { errs[i] = e; ms[NAMES[i]] = Date.now() - t0; throw e; }));
+  P.forEach(p => p.catch(() => {})); // (a late source's error is logged by addLate's chain; none goes unhandled)
+  if (opts.firstWait) { let t; await Promise.race([Promise.allSettled(P), new Promise(r => { t = setTimeout(r, opts.firstWait); })]); clearTimeout(t); }
+  else await Promise.all(P);
+  const err = errs.find(Boolean); if (err) throw err; // (an early source's error, as before)
   const list = [];
   const cur = g.game.art && g.game.art[part];
   if (cur && paths.isFile(cur)) list.push(localCand(cur, 'current', { label: 'Current' }));
-  for (const c of remote) {
-    if (isMissing(c.url)) continue; // a 404 this week: not offered
-    const k = 'r' + sha(c.url + '|' + (c.cut || '')).slice(0, 15), inf = fileInfo(cachePath(c)); if (inf) touch(cachePath(c)); // shown again: recently used
-    list.push({ ...c, key: k, w: inf ? inf.w : c.w || null, h: inf ? inf.h : c.h || null, bytes: inf ? inf.bytes : 0, cached: !!inf, inUse: false }); // (SteamGridDB says its sizes up front)
-  }
+  for (const v of got) for (const c of v || []) { const x = remoteCand(c); if (x) list.push(x); }
   // a Switch / 3DS cartridge drawn from the game's own front cover (1.73.5): always offered, ranked last, so a game that no
   // source has a cartridge photo of still gets one (its address names the cover and its date: a new cover makes a new one)
   const front = g.game.art && g.game.art.front;
@@ -324,9 +329,31 @@ async function listFor(g, part, opts = {}) {
   const dirs = [...new Set([g.dir, cur ? path.dirname(cur) : null].filter(Boolean))];
   for (const d of dirs) for (const r of covers.replacedFor(d, g.base, SUFFIX[part]).slice(0, 12)) list.push(localCand(r.file, 'earlier', { inUse: false, label: 'Earlier' + (dateWord(r.stamp) ? ' · ' + dateWord(r.stamp) : '') }));
   dedupe(list);
-  const entry = { list, byKey: new Map(list.map(c => [c.key, c])), g };
+  const entry = { list, byKey: new Map(list.map(c => [c.key, c])), g, at: Date.now(), pending: 0, full: !!opts.firstWait }; // (full: the picker's, every source asked; Sets and restyles ask fewer)
   lists.set(lk, entry); while (lists.size > LIST_MAX) lists.delete(lists.keys().next().value);
+  const timing = () => { if (opts.firstWait) log('Art Studio: sources for', part, Object.entries(ms).map(([k, v]) => k + ' ' + v + ' ms').join(', ')); }; // (the picker's only: a restyle asks for hundreds)
+  const late = P.filter((p, i) => got[i] === null && !errs[i]);
+  if (!late.length) timing();
+  else { entry.pending = late.length;
+    for (const p of late) p.then(v => addLate(entry, part, v), e => log('Art Studio: a source failed', e && e.message)).finally(() => {
+      if (--entry.pending) return; timing(); env.send('art:cand', { systemId: g.sysId, file: g.game.file, part, listDone: true }); }); }
   return entry;
+}
+// a source's picture as a list entry (null: an address that answered 404 this week, not offered)
+function remoteCand(c) {
+  if (isMissing(c.url)) return null;
+  const k = 'r' + sha(c.url + '|' + (c.cut || '')).slice(0, 15), inf = fileInfo(cachePath(c)); if (inf) touch(cachePath(c)); // shown again: recently used
+  return { ...c, key: k, w: inf ? inf.w : c.w || null, h: inf ? inf.h : c.h || null, bytes: inf ? inf.bytes : 0, cached: !!inf, inUse: false }; // (SteamGridDB says its sizes up front)
+}
+// (beta.12) a source that answered after the list went back: its pictures join the list, the screen gets each as a whole card
+// (art:cand with cand), and their previews download with the rest (a guessed address is listed once it really downloads)
+function addLate(entry, part, items) {
+  const g = entry.g, add = [];
+  for (const c of items || []) { const x = remoteCand(c); if (!x || entry.byKey.has(x.key)) continue; entry.list.push(x); entry.byKey.set(x.key, x); add.push(x); }
+  if (!add.length) return;
+  dedupe(entry.list);
+  for (const x of add) if (!x.dup && !(x.guess && !x.cached)) env.send('art:cand', { systemId: g.sysId, file: g.game.file, part, key: x.key, late: true, cand: pub(x, g) });
+  if (entry.gen != null) warm(entry, part, add); // (before the first warm the whole list, these too, is about to be warmed)
 }
 // SteamGridDB posters for the Front (only with the user's key; Settings → Accounts & services). opts.sgdb false: not asked
 // (a restyle to a look that never picks them). The picker waits a few seconds at most: a slower answer is still cached for
@@ -374,8 +401,10 @@ function pub(c, g) {
 }
 // downloads the list's pictures in the background (three at a time, the newest request first) and tells the screen as
 // each arrives; a newer request makes an older one stop after the downloads already under way
-function warm(entry, part) {
-  const gen = ++thumbGen, g = entry.g, todo = entry.list.filter(c => !c.file && !c.cached && !c.failed && !c.thumbFailed && !(c.thumbUrl && paths.isFile(thumbPath(c))));
+// (beta.12) only: just these (a late source's), downloaded under the list's own turn: if another part or game has been asked
+// for since, they're stopped like the rest
+function warm(entry, part, only) {
+  const gen = only ? entry.gen : (entry.gen = ++thumbGen), g = entry.g, todo = (only || entry.list).filter(c => !c.file && !c.cached && !c.failed && !c.thumbFailed && !(c.thumbUrl && paths.isFile(thumbPath(c))));
   const send = (c, extra) => env.send('art:cand', { systemId: g.sysId, file: g.game.file, part, key: c.key, thumb: thumbOf(c), w: c.w || null, h: c.h || null, inUse: !!c.inUse, score: scores(c, { style: styleFor(cfg(), g.sysId), game: g.game }), ...extra });
   return covers.pool(todo, 3, async c => {
     // a newer request took over the downloads: say this one isn't coming (the screen mustn't wait for it); it isn't marked
@@ -664,11 +693,14 @@ function setStyle(a) {
   return { jobId: startRestyle(def, before, next), style: next };
 }
 async function cands(a) {
-  const g = await gameArg(a), part = partArg(a.part), entry = await listFor(g, part, { fresh: true, lrWait: 3000 }); // libretro's weekly list: not worth more than a moment's wait here
+  // (beta.12) the list goes back after 1.2 s at most with the sources that answered (the rest join it as they answer: pending);
+  // a list made in the last few minutes is used again (the screen asks fresh after a change, and a pick clears it anyway)
+  const g = await gameArg(a), part = partArg(a.part), have = lists.get(g.key + '|' + part), reuse = !a.fresh && have && have.full && Date.now() - have.at < LIST_REUSE_MS;
+  const entry = await listFor(g, part, { fresh: !reuse, lrWait: 3000, firstWait: 1200, sgWait: 15000, ssWait: 15000 }); // libretro's weekly list: not worth more than a moment's wait here
   setImmediate(() => warm(entry, part));
   // a guessed address (GameTDB, another region) is listed once it has really downloaded; until then the screen hears of it only
   // through art:cand (with the whole card) when it arrives, and never if it doesn't
-  return { list: entry.list.filter(c => !c.dup && !(c.guess && !c.cached && !c.inUse)).map(c => pub(c, g)), index: covers.indexState() };
+  return { list: entry.list.filter(c => !c.dup && !(c.guess && !c.cached && !c.inUse)).map(c => pub(c, g)), index: covers.indexState(), pending: entry.pending > 0 };
 }
 async function keyed(g, part, key) {
   if (typeof key !== 'string' || !/^[a-z0-9]{4,64}$/.test(key)) throw new Error('Bad choice.');

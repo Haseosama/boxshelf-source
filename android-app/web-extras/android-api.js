@@ -47,7 +47,7 @@
     st.config.ui = st.config.ui || {}; if (st.config.ui.autoCovers === undefined) st.config.ui.autoCovers = true; // box art comes on its own on Android unless switched off
     // (beta.11) Text size: android-early.js reads it from localStorage, so the saved choice is copied back in case the
     // WebView's storage was cleared; it's used from the next start
-    { const ts = st.config.ui.textSize; if (/^(auto|normal|large|larger)$/.test(ts || '')) try { if (localStorage.getItem('bs-textsize') !== ts) localStorage.setItem('bs-textsize', ts); } catch {} }
+    { const ts = st.config.ui.textSize; if (/^(auto|normal|large|larger|largest)$/.test(ts || '')) try { if (localStorage.getItem('bs-textsize') !== ts) localStorage.setItem('bs-textsize', ts); } catch {} }
     if (st.config.ui.fullArt === undefined) st.config.ui.fullArt = true; // backs and spines too, where a source has them
     art.db = Object.assign({ v: 1, games: {}, miss: {}, ids: {} }, await load('art.json', {}));
     art.db.studio = Object.assign({ styles: {}, games: {} }, art.db.studio || {});
@@ -102,16 +102,17 @@
   const ytOff = () => { const f = document.getElementById('bsYt'); if (f) { f.src = 'about:blank'; f.remove(); } };
   const ytPlace = (f, r, show) => { f.style.left = r.x + 'px'; f.style.top = r.y + 'px'; f.style.width = r.w + 'px'; f.style.height = r.h + 'px'; f.style.visibility = show ? 'visible' : 'hidden'; };
   const vkey = n => String(n || '').toLowerCase().replace(/\.[a-z0-9]{2,4}$/, '').replace(/\s*[([][^)\]]*[)\]]/g, '').replace(/-(video|01|02|trailer)$/i, '').replace(/[^a-z0-9]+/g, '');
-  async function scanSystem(s, c) {
+  // failed (optional): the folders that couldn't be read this time (no permission, SD card out) are added to it
+  async function scanSystem(s, c, failed) {
     const files = [], vmap = new Map();
     for (const dir of c.romDirs || []) {
-      const uri = st.folders[dir]; if (!uri) { log('no access to', dir); continue; }
+      const uri = st.folders[dir]; if (!uri) { log('no access to', dir); if (failed) failed.push({ dir, uri: '' }); continue; }
       const exts = [...new Set([...s.extensions, ...Object.keys(COMP), ...VID_EXTS])];
       try { const r = await N.listFiles({ uri, exts, depth: 4 }); for (const f of r.files || []) {
         if (VID_EXTS.includes(String(f.ext || '').toLowerCase()) && !s.extensions.includes(f.ext)) { const base = String(f.name).replace(/\.[^.]+$/, '').toLowerCase(), v = { uri: f.uri, name: f.name, size: f.size || 0 };
           if (!vmap.has('=' + base)) vmap.set('=' + base, v); const k = vkey(f.name); if (k && !vmap.has(k)) vmap.set(k, v); continue; }
         files.push({ ...f, path: idToPath(f.docId), tree: uri }); } }
-      catch (e) { log('scan failed', dir, e && e.message); }
+      catch (e) { log('scan failed', dir, e && e.message); if (failed) failed.push({ dir, uri }); }
     }
     vids.set(s.id, vmap);
     // a .cue / .gdi / .m3u owns the track and disc files beside it; those never get boxes of their own
@@ -134,11 +135,28 @@
     for (const g of games.values()) { const o = own[s.id + ':' + g.file]; if (o && o.title && o.title !== g.title) { g.fileTitle = g.title; g.title = String(o.title); } }
     return [...games.values()].sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base', numeric: true }));
   }
+  // a games folder that couldn't be read (permission lost, SD card out or not mounted yet) keeps the games the last scan
+  // found in it, so the saved library never loses them; a folder that was read and is really empty still clears
+  function keepUnread(sysId, failed, games) {
+    const prev = (st.library || []).find(sh => sh && sh.id === sysId && sh.kind === 'console'); if (!prev) return;
+    const under = (f, d) => { const p = String(d || '').replace(/\/+$/, ''); return !!p && (f === p || String(f || '').startsWith(p + '/')); };
+    const have = new Set(games.map(g => g.id)); let n = 0;
+    for (const g of prev.games || []) { if (!g || g.kind !== 'rom' || have.has(g.id)) continue;
+      if (!failed.some(x => (x.uri && g.romTree === x.uri) || under(g.file, x.dir))) continue;
+      games.push(Object.assign({}, g, { art: {} })); have.add(g.id); n++; }
+    if (!n) return;
+    games.sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base', numeric: true }));
+    log('scan: kept', n, 'games of', sysId, 'from folders that could not be read');
+  }
   async function scanAll() {
     await ready; const out = [];
+    // (beta.12) RomM: its saved library and where its downloads went (read once), merged into each console below
+    if (rmOn()) { try { await rmCache(); await rmLocal(); } catch (e) { log('RomM library', e && e.message); } }
     for (const s of SYS) { const c = st.config.systems[s.id]; if (!c || !c.enabled || (!c.emulator && !(c.romDirs || []).length)) continue;
-      const e = emuFor(pkgOf(c.emulator)) || E[s.emus[0]];
-      out.push({ id: s.id, kind: 'console', name: s.name, emulatorName: e ? e.name : '', hasEmulator: !!c.emulator, emulator: c.emulator, gameArgs: '', bootOnLaunch: c.bootOnLaunch !== false, games: await scanSystem(s, c) }); }
+      const e = emuFor(pkgOf(c.emulator)) || E[s.emus[0]], failed = [], games = await scanSystem(s, c, failed);
+      if (failed.length) keepUnread(s.id, failed, games);
+      try { rmMerge(s, c, games); } catch (e2) { log('RomM games', e2 && e2.message); }
+      out.push({ id: s.id, kind: 'console', name: s.name, emulatorName: e ? e.name : '', hasEmulator: !!c.emulator, emulator: c.emulator, gameArgs: '', bootOnLaunch: c.bootOnLaunch !== false, games }); }
     // Apps shelf: every app on the device with a launcher icon (Thor tools, store, media apps…), Boxshelf itself left out
     // (beta.9) ports, recomps and custom APKs picked in Settings → Games → Ports & custom APKs: a Custom shelf of their own
     // (and off the Apps shelf, so nothing shows twice). Stored per app as config.portsOn["com_example_game"] = true
@@ -154,6 +172,7 @@
     applyArt(out); applyManuals(out); st.library = out; store('library.json', out); // (saved at once: a delayed save was lost if the app closed or reloaded right after a scan; tested in beta.8)
     setTimeout(() => queueArt('scan'), 1500); // after the shelf has had its turn
     setTimeout(() => manQueue('scan'), 5000);
+    if (rmOn() && !rm.synced) { rm.synced = true; setTimeout(() => rmSync(false), 20000); } // (beta.12) RomM: one background sync a little after the first scan
     return out;
   }
   const gameByFile = file => { for (const sh of st.library || []) for (const g of sh.games || []) if (g.file === file || (g.discs || []).includes(file)) return g; return null; };
@@ -187,7 +206,11 @@
   const sub = (v, ctx) => typeof v === 'string' ? v.replace('$DOC', ctx.doc || '').replace('$PATH', ctx.path || '').replace('$CORE', ctx.core || '').replace('$CFG', ctx.cfg || '') : (v && typeof v === 'object' && 'bool' in v ? !!v.bool : v);
   async function start(systemId, game) {
     await ready; const s = sysById[systemId], c = st.config.systems[systemId] || {};
-    let pkg = pkgOf(c.emulator);
+    // (beta.12) this game's own emulator app and core (Details → Emulator), when that app is still installed; else the shelf's
+    const own = (game && (st.config.games || {})[systemId + ':' + game.file]) || {};
+    let pkg = pkgOf(own.emulator); if (pkg && !(await apps()).has(pkg)) { log('launch: this game\'s own emulator is gone, using the shelf\'s'); pkg = null; }
+    const ownCore = pkg && own.core && s && s.cores.includes(own.core) ? own.core : '';
+    if (!pkg) pkg = pkgOf(c.emulator);
     if (!pkg) { const inst = await apps(); for (const id of s.emus) { pkg = findInstalled(id, inst); if (pkg) break; } }
     if (!pkg) throw new Error(`No emulator for ${s ? s.name : systemId} is installed. Pick one in Settings → ${s ? s.name : 'Consoles'}.`);
     // (beta.10) an app Boxshelf has no launch data for: its own start screen, handed the game the standard way (VIEW with
@@ -195,7 +218,7 @@
     const e = emuFor(pkg); if (!e) log('launch: no launch data for', pkg, '- handing it the game as VIEW');
     let spec = e ? Object.assign({}, e.launch, (e.variants || {})[pkg] || {}) : { action: 'android.intent.action.VIEW', data: 'doc' };
     const ctx = { doc: game && game.uri, path: game && game.file,
-      core: s && s.cores.length ? `/data/data/${pkg}/cores/${(c.core || s.cores[0])}_libretro_android.so` : '',
+      core: s && s.cores.length ? `/data/data/${pkg}/cores/${(ownCore || c.core || s.cores[0])}_libretro_android.so` : '',
       cfg: `/storage/emulated/0/Android/data/${pkg}/files/retroarch.cfg` };
     const req = { pkg, grant: [] };
     if (game) {
@@ -206,6 +229,9 @@
       req.flags = spec.flags || [];
       if (ctx.doc) req.grant.push(ctx.doc);
     }
+    // (beta.12, the Thor) a game that doesn't use a second screen leaves Boxshelf's bottom screen up while it runs; DS,
+    // 3DS and Wii U games (their emulators draw on it) get the bottom screen as before
+    req.keepBottom = !/^(nds|n3ds|wiiu)$/.test(String(systemId || ''));
     log('launch', JSON.stringify(req));
     running = { systemId, file: game && game.file, id: game && game.id, at: Date.now() };
     try { await N.launch(req); } catch (err) { running = null; throw new Error((err && err.message) || String(err)); }
@@ -213,6 +239,17 @@
     setTimeout(() => (window.__bsRunReady || (() => {}))(), 900); // the emulator is in front: the launch screen can go
     return {};
   }
+  // (beta.12) the first Play of a session used to ask Android for the list of apps and the emulator's screens first: asked
+  // ahead now, once the shelf has settled (never while it moves or a game runs), so Play goes straight to the emulator
+  setTimeout(async function warm() {
+    try { await ready; if (running) return; if (window.BS_BUSY && window.BS_BUSY()) { setTimeout(warm, 1500); return; }
+      const inst = await apps(), seen = new Set();
+      for (const s of Object.values(sysById)) { const c = st.config.systems[s.id] || {}; let pkg = pkgOf(c.emulator);
+        if (!pkg) for (const id of s.emus || []) { pkg = findInstalled(id, inst); if (pkg) break; }
+        if (!pkg || seen.has(pkg)) continue; seen.add(pkg);
+        const e = emuFor(pkg), spec = e ? Object.assign({}, e.launch, (e.variants || {})[pkg] || {}) : null; if (spec && spec.activity) await resolveActivity(pkg, spec.activity); }
+    } catch (e) { log('launch warm-up', e && e.message); }
+  }, 6000);
   if (N.addListener) Promise.resolve().then(() => N.addListener('resume', onResume)).catch(e => log('resume listener', e && e.message));
   function onResume() {
     refreshHome(); // the Home app may have been changed in Android's settings meanwhile
@@ -299,6 +336,11 @@ window.BS_QUIET = () => ({ running: !!running, artPaused: !!art.paused, hidden: 
   // what comes back is one small message, so it needs no idle slot (waiting for one before every page made manuals slow)
   async function netTurn() { while (running || art.paused || document.hidden || (window.BS_BUSY && window.BS_BUSY())) await sleep(150); }
   if (N.addListener) Promise.resolve().then(() => { N.addListener('pause', () => { art.paused = true; }); N.addListener('resume', () => { art.paused = false; }); }).catch(() => {});
+  // (beta.12) how long the screen stays on without input (MainActivity): Settings' "Dim the screen after", else the native
+  // default (10 min). An APK without keepAwake (or the browser test's pretend device) just doesn't answer
+  function awakeSync() { const m = +((st.config && st.config.ui) || {}).dimMinutes || 0;
+    if (isNative && N && N.keepAwake) Promise.resolve().then(() => N.keepAwake({ minutes: m > 0 ? m : 0 })).catch(() => {}); }
+  ready.then(awakeSync).catch(() => {});
   // a short fingerprint (FNV-1a, twice): cache names for downloads, and to notice a changed sign-in without keeping it
   const fp = s => { let a = 2166136261, b = 5381; for (const ch of String(s)) { const c = ch.charCodeAt(0); a = Math.imul(a ^ c, 16777619); b = (Math.imul(b, 33) ^ c) >>> 0; } return (a >>> 0).toString(16).padStart(8, '0') + b.toString(16).padStart(8, '0'); };
 
@@ -417,6 +459,7 @@ window.BS_QUIET = () => ({ running: !!running, artPaused: !!art.paused, hidden: 
     art.toastAt = new Set(art.q.map(j => j.g.id)).size; if (art.reason === 'now') startToast();
     const worker = async () => { while (art.q.length) { await idleTurn(); reorderIfMoved(); const j = art.q.shift(); if (!j) break;
       art.now.set(j, j.g.title || baseOf(j.g.file)); card.paint();
+      j.t0 = Date.now(); // (when the job started: a picture the player picks after this is never written over, see found and keepSince)
       try { await (j.part === 'wrap' ? wrapJob(j) : artJob(j)); } catch (e) { log('box art', j.g.title, e && e.message); }
       art.now.delete(j); art.keys.delete(j.k); art.done++; paintArt(); card.paint(); } };
     try { await Promise.all(Array.from({ length: WORKERS }, worker)); } finally { card.finish();
@@ -439,6 +482,7 @@ window.BS_QUIET = () => ({ running: !!running, artPaused: !!art.paused, hidden: 
   // a front or a disc
   async function artJob(j) {
     const { g, sysId, part } = j, tree = g.romTree || '', sub = tree ? subFor(sysId, tree) : '', name = baseOf(g.file) + SUFFIX[part];
+    if (recHas(g.id, part)) return; // given a picture (Art Studio) while this job waited in the queue: nothing to do
     // 0. its display copy went missing (Android cleared the app's cache folder…): made again from the original we have
     const old = art.stale[j.k];
     if (old) { delete art.stale[j.k];
@@ -454,7 +498,8 @@ window.BS_QUIET = () => ({ running: !!running, artPaused: !!art.paused, hidden: 
     // 2. the sources, best first, one at a time (a source that has it ends the search)
     const save = saveTree(tree); let unsure = false;
     for (const next of artGroups(sysId, g, part)) { const grp = await next(); if (grp.unsure) unsure = true; if (!grp.urls.length) continue;
-      const r = await fetchGroup(grp, { tree: save, sub, name, key: sysId, maxH: DISPLAY_H });
+      const r = await fetchGroup(grp, { tree: save, sub, name, key: sysId, maxH: DISPLAY_H, keepSince: j.t0 || 0 });
+      if (r && r.kept) return; // a picture was put in its place while this downloaded (Art Studio): left as it is, nothing remembered as missing
       if (r && r.ok) { folderSaved(r, save, sub); return found(j, r.display, r.file, r.saved); }
       if (!r || r.busy) unsure = true; }
     if (!unsure) art.db.miss[j.k] = Date.now(); // busy / offline: not remembered, the next run tries again
@@ -488,7 +533,8 @@ window.BS_QUIET = () => ({ running: !!running, artPaused: !!art.paused, hidden: 
     // (0.3.3: LaunchBox's own back and spine scans first, once its database is on the device, then ScreenScraper's)
     const own = async () => { for (const p of need()) for (const next of [() => LB_PLAT[sysId] ? lbGroup(sysId, g, p) : { urls: [] }, () => ssGroup(sysId, g, p)]) {
         const grp = await next(); if (grp.unsure) unsure = true; if (!grp.urls.length) continue;
-        const r = await fetchGroup(grp, { tree: save, sub, name: base + SUFFIX[p], key: sysId, maxH: DISPLAY_H });
+        const r = await fetchGroup(grp, { tree: save, sub, name: base + SUFFIX[p], key: sysId, maxH: DISPLAY_H, keepSince: j.t0 || 0 });
+        if (r && r.kept) { unsure = true; break; } // (put in its place meanwhile: left as it is)
         if (r && r.ok) { folderSaved(r, save, sub); found(j, r.display, r.file, r.saved, p); break; } else if (!r || r.busy) unsure = true; } };
     if (JEWEL.has(sysId)) { await own(); await wrap(); } else { await wrap(); await own(); }
     if (need().length && !unsure) art.db.miss[j.k] = Date.now();
@@ -587,6 +633,9 @@ window.BS_QUIET = () => ({ running: !!running, artPaused: !!art.paused, hidden: 
   // file: the original's address (a content:// uri or an app file), so a lost display copy can be made again from it
   function found(j, display, file, where, part) {
     part = part || j.part;
+    // a background job only fills a part that had no picture when it was queued: one there now was set while it ran
+    // (Art Studio, My picture…) and stays. (j.t0: a real job; the browser tests' __bsArtFound hands a picture in directly)
+    if (j.t0 && recHas(j.g.id, part)) { log('box art: kept the picture set meanwhile for', j.g.title, part); return; }
     applyRec(j.g, part, { d: display, f: file || '', w: where || '', h: DISPLAY_H }); delete art.db.miss[j.k];
     if (part === 'front') art.added++;
     if (!j.counted) { j.counted = true; art.found++; } // (a wrap's back and spine are one find)
@@ -1513,7 +1562,8 @@ window.BS_QUIET = () => ({ running: !!running, artPaused: !!art.paused, hidden: 
       S.lock = m.prev || {}; delete lastSet[g.id]; saveArt();
       return { art: artOf(g), lock: JSON.parse(JSON.stringify(S.lock)) }; },
     // (0.3.1) the free sources that could add versions of this part but aren't set up: Art Studio's "More art sources" card
-    artSourcesMissing: (systemId, part) => [LB_PLAT[systemId] && !lbHas(systemId) && 'LaunchBox', ...(part === 'front' ? [!sgKey() && 'SteamGridDB', !igdbOn() && 'IGDB'] : [!ssConfigured() && 'ScreenScraper'])].filter(Boolean),
+    // (beta.12: ScreenScraper offered for every part, the front too: it has fronts for most consoles)
+    artSourcesMissing: (systemId, part) => [LB_PLAT[systemId] && !lbHas(systemId) && 'LaunchBox', !ssConfigured() && 'ScreenScraper', ...(part === 'front' ? [!sgKey() && 'SteamGridDB', !igdbOn() && 'IGDB'] : [])].filter(Boolean),
     // (0.3.3) the LaunchBox database on the device: Settings' "Refresh art database" row and Art Studio's "build the index" ask
     artBuildIndex: () => lbBuild(),
     artRefreshIndex: () => lbBuild(),
@@ -1723,16 +1773,333 @@ window.BS_QUIET = () => ({ running: !!running, artPaused: !!art.paused, hidden: 
   // names), not the whole library as JSON on the page's thread; the same → { unchanged: true } and the shelf stays as it is
   const libSig = lib => { const p = []; for (const sh of lib || []) { const G = sh.games || [];
     p.push('#' + [sh.id, sh.kind, sh.name, sh.emulator || '', sh.emulatorName || '', sh.hasEmulator ? 1 : 0, sh.bootOnLaunch === false ? 0 : 1, G.length].join('|'));
-    for (const g of G) p.push([g.id, g.title, g.fileTitle || '', g.region || '', g.sizeBytes || 0, g.added || 0, (g.discs || []).length, g.appId || ''].join('|')); } return p.join('\n'); };
+    for (const g of G) p.push([g.id, g.title, g.fileTitle || '', g.region || '', g.sizeBytes || 0, g.added || 0, (g.discs || []).length, g.appId || '', g.romm && g.romm.cloud ? 'c' : ''].join('|')); } return p.join('\n'); }; // (beta.12: a RomM game downloaded since is a change)
+  // ---------- (beta.12) RomM, a self-hosted game library (the Windows build's main/romm.js and main.js, on the device) ----------
+  // Its games join their console's shelf at the place they'll have once downloaded (<the console's first games folder>/
+  // <RomM's file name>, so favourites and play time carry over), with a cloud badge (g.romm.cloud) until then. Play
+  // downloads one first (BoxshelfNative.rommDownload: straight into that folder, resumable, checked, a zip unpacked into a
+  // folder of its own), its progress on the boot slide; B stops it (rommCancel, the part kept for the next Play). The
+  // library: the saved copy (romm-library.json) at once, and a sync in the background once the shelf is quiet (idleTurn:
+  // never during a slide), its pages one after another, later syncs only what changed (updated_after) plus a light id
+  // sweep for removed games. Every request goes through the native side (RomM turns the page's own origin away); the
+  // sign-in is kept in the settings (keys.rommToken, as the other keys) and added there, only for the saved server's
+  // addresses. Box art: the box art job above, by title (a game whose file isn't here yet needs nothing from the file).
+  const RM_SLUGS = { gc: ['ngc', 'gamecube', 'gc', 'gcn', 'nintendo-gamecube'], wii: ['wii'], wiiu: ['wiiu', 'wii-u'], sw: ['switch', 'nintendo-switch', 'nsw'],
+    sw2: ['switch-2', 'switch2', 'nintendo-switch-2'], psp: ['psp', 'playstation-portable'], ps2: ['ps2', 'playstation-2'], ps3: ['ps3', 'playstation-3'],
+    ps4: ['ps4', 'ps4--1', 'playstation-4'], ps5: ['ps5', 'playstation-5'], x360: ['xbox360', 'xbox-360', 'x360'], n3ds: ['3ds', 'n3ds', 'nintendo-3ds', 'new-nintendo-3ds'],
+    psx: ['ps', 'psx', 'ps1', 'playstation', 'playstation-1'], nes: ['nes', 'famicom', 'fds', 'famicom-disk-system'], snes: ['snes', 'sfam', 'super-famicom', 'super-nintendo'],
+    n64: ['n64', 'nintendo-64'], gb: ['gb', 'gameboy', 'game-boy'], gbc: ['gbc', 'gameboy-color', 'game-boy-color'], gba: ['gba', 'gameboy-advance', 'game-boy-advance'],
+    nds: ['nds', 'nintendo-ds', 'nintendo-dsi', 'dsi'], megadrive: ['genesis-slash-megadrive', 'genesis', 'megadrive', 'mega-drive', 'md', 'sega-genesis'],
+    mastersystem: ['sms', 'mastersystem', 'master-system', 'sega-master-system'], gamegear: ['gamegear', 'game-gear', 'gg', 'sega-game-gear'], dreamcast: ['dc', 'dreamcast', 'sega-dreamcast'],
+    saturn: ['saturn', 'sega-saturn'], pcengine: ['turbografx16--1', 'turbografx-16-slash-pc-engine-cd', 'tg16', 'turbografx16', 'turbografx-16', 'pce', 'pcengine', 'pc-engine', 'pc-engine-cd', 'pcenginecd', 'tg-cd'],
+    neogeo: ['neogeoaes', 'neogeomvs', 'neo-geo', 'neogeo', 'neo-geo-aes', 'neo-geo-mvs'], arcade: ['arcade', 'mame', 'fbneo', 'fba', 'cps1', 'cps2', 'cps3'],
+    segacd: ['segacd', 'sega-cd', 'mega-cd', 'megacd', 'sega-cd-32x'], sega32x: ['sega32', 'sega32x', 'sega-32x', '32x'], atari2600: ['atari2600', 'atari-2600', 'a2600'],
+    atarilynx: ['lynx', 'atari-lynx', 'atarilynx'], wonderswan: ['wonderswan', 'wonderswan-color', 'wonderswancolor', 'wsc', 'ws'], dos: ['dos', 'ms-dos', 'msdos', 'pc-dos'] };
+  const RM_PAGE = 250, RM_PAUSE = 40; // (250 a page: each answer is parsed on this thread, in a quiet moment, so each is kept small)
+  const RM_CLEAR = "Android won't open plain http:// addresses in this build: use your RomM's https:// address";
+  const rm = { lib: null, byCon: null, local: null, pair: null, syncing: null, dl: null, synced: false, devId: null, ix: null, offline: false, say: null, libFns: [] };
+  // the server's address as the native side reads it too (BoxshelfNativePlugin.rommBase): http:// when none, no trailing / or /api
+  const rmBase = () => { let u = String((st.config && st.config.romm && st.config.romm.server) || '').trim(); if (!u) return '';
+    if (!/^https?:\/\//i.test(u)) u = 'http://' + u; u = u.replace(/\/+$/, ''); if (/\/api$/i.test(u)) u = u.slice(0, -4); return u.replace(/\/+$/, ''); };
+  const rmToken = () => String(((st.config && st.config.keys) || {}).rommToken || '').trim();
+  const rmOn = () => !!(rmBase() && rmToken());
+  const rmErr = (code, msg) => Object.assign(new Error(msg || code), { code });
+  const rmWhy = code => code === 'cleartext' ? RM_CLEAR : (code || 'offline');
+  const rmNum = v => (typeof v === 'number' && isFinite(v) ? v : (typeof v === 'string' && /^\d+$/.test(v) ? +v : null));
+  const rmTs = s => { const t = Date.parse(s); return isFinite(t) ? t : 0; };
+  // a file name as the native side keeps it (BoxshelfNativePlugin.safeName leaves this one as it is)
+  const rmSafe = n => String(n || 'game').replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_').slice(0, 150).trim().replace(/[. ]+$/, '') || 'game';
+  // one call to RomM: JSON in and out. Throws { code: 'offline' | 'cleartext' } when it can't be reached; an HTTP error
+  // comes back as { ok: false, status }. wait: the answer is parsed in a quiet moment (a library page can be big)
+  async function rmCall(p, o = {}) {
+    const base = rmBase(); if (!base) throw rmErr('no-server');
+    const req = { url: base + p, romm: true, headers: { Accept: 'application/json' } };
+    if (o.auth === false) req.auth = false;
+    if (o.json !== undefined) { req.body = JSON.stringify(o.json); req.contentType = 'application/json'; }
+    let r; try { r = await N.httpText(req); } catch (e) { const m = String((e && e.message) || ''); throw rmErr(/cleartext/i.test(m) ? 'cleartext' : 'offline', 'server not reachable'); }
+    if (o.wait) await o.wait();
+    let json = null; try { json = r && r.text ? JSON.parse(r.text) : null; } catch {}
+    const status = +(r && r.status) || 0; return { status, ok: status >= 200 && status < 300, json };
+  }
+  const rmChanged = () => { for (const f of rm.libFns) try { f({ romm: 1 }); } catch (e) { console.error(e); } };
+  // ----- pairing: the device flow (RomM 5.0+: a QR code / address and a code to approve) or an 8-digit code (4.8+) -----
+  async function rmDeviceId() { if (rm.devId) return rm.devId;
+    const o = await load('romm-device.json', null); if (o && o.id) rm.devId = String(o.id);
+    if (!rm.devId) { rm.devId = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : 'bx-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 12); await store('romm-device.json', { id: rm.devId }); }
+    return rm.devId; }
+  const rmReason = j => { if (!j || typeof j !== 'object') return ''; const d = j.detail; return String(j.error || (d && typeof d === 'object' ? d.error || d.code || '' : d) || '').toLowerCase(); };
+  // (beta.12) the token is kept with the origin of the server it was paired with (keys.rommTokenServer, as on the PC):
+  // the native side never sends it anywhere else, and a new server address in Settings drops it (saveConfig)
+  const rmOrigin = u => { try { return u ? new URL(u).origin : ''; } catch { return ''; } };
+  async function rmSaveToken(t) { st.config.keys = Object.assign({}, st.config.keys || {}, { rommToken: String(t || ''), rommTokenServer: t ? rmOrigin(rmBase()) : '' }); await store('config.json', st.config); }
+  // (a sync still running for the old sign-in keeps nothing: a fresh one follows it)
+  function rmAfterPair() { rm.lib = null; rm.byCon = null; rm.synced = true; Promise.resolve(rm.syncing).then(() => rmCache()).then(() => rmSync(false)).catch(() => {}); }
+  async function rmPairStart() { await ready; const base = rmBase(); if (!base) return { ok: false, error: 'no-server' };
+    let r; try { r = await rmCall('/api/auth/device/init', { auth: false, json: { client_device_identifier: await rmDeviceId(), name: 'Boxshelf', client: 'Boxshelf', platform: 'android',
+      client_version: String(window.BS_BUILD || '0').split(' ')[0], requested_scopes: ['roms.read', 'platforms.read'] } }); }
+    catch (e) { return { ok: false, error: rmWhy(e.code) }; }
+    if (r.status === 404 || r.status === 405) return { ok: false, error: 'unsupported', useCode: true };
+    if (r.status === 429) return { ok: false, error: 'rate-limited' };
+    const j = r.json || {}; if (!r.ok || !j.device_code || !j.user_code) return { ok: false, error: 'http-' + r.status };
+    const interval = Math.max(1, rmNum(j.interval) || 5) * 1000, now = Date.now(), vp = String(j.verification_path_complete || j.verification_uri_complete || j.verification_path || j.verification_uri || '');
+    rm.pair = { deviceCode: j.device_code, interval, nextAt: now + interval, expiresAt: now + Math.max(30, rmNum(j.expires_in) || 600) * 1000 };
+    const qrUrl = /^https?:\/\//i.test(vp) ? vp : base + (vp.startsWith('/') ? vp : '/' + vp);
+    let qr = ''; try { qr = qrSvg(qrUrl); } catch (e) { log('RomM: no QR code', e && e.message); } // (the card still shows the address and the code)
+    return { ok: true, userCode: j.user_code, qrUrl, qr, expiresAt: rm.pair.expiresAt, interval: interval / 1000 };
+  }
+  // one poll, never sooner than the server's interval (pending answers carry wait: ms until the next poll is due)
+  async function rmPairPoll() {
+    const p = rm.pair; if (!p) return { state: 'expired' };
+    const now = Date.now(); if (now >= p.expiresAt) { rm.pair = null; return { state: 'expired' }; }
+    if (now < p.nextAt) return { state: 'pending', wait: p.nextAt - now };
+    let r; try { r = await rmCall('/api/auth/device/token', { auth: false, json: { device_code: p.deviceCode } }); }
+    catch (e) { p.nextAt = Date.now() + p.interval; return { state: 'pending', wait: p.interval, error: rmWhy(e.code) }; }
+    if (rm.pair !== p) return { state: 'expired' };
+    const j = r.json || {}, tok = j.access_token || j.token || j.raw_token;
+    if (r.ok && tok) { rm.pair = null; await rmSaveToken(tok); rmAfterPair(); return { state: 'ok' }; } // (the token itself never goes back to the page)
+    const why = rmReason(j);
+    if (why === 'slow_down' || r.status === 429) p.interval += 5000;
+    if (why === 'access_denied') { rm.pair = null; return { state: 'denied' }; }
+    if (why === 'expired_token' || why === 'invalid_grant') { rm.pair = null; return { state: 'expired' }; }
+    p.nextAt = Date.now() + p.interval; return { state: 'pending', wait: p.interval };
+  }
+  async function rmPairCode(code) { await ready; if (!rmBase()) return { ok: false, error: 'no-server' };
+    const c = String(code || '').replace(/\D/g, '').slice(0, 12); if (!c) return { ok: false, error: 'not accepted' };
+    let r; try { r = await rmCall('/api/client-tokens/exchange', { auth: false, json: { code: c } }); } catch (e) { return { ok: false, error: rmWhy(e.code) }; }
+    if (r.status === 404 || r.status === 405) return { ok: false, error: 'unsupported' };
+    const j = r.json || {}, tok = typeof j === 'string' ? j : j.access_token || j.token || j.raw_token;
+    if (!r.ok || !tok) return { ok: false, error: r.status === 429 ? 'rate-limited' : 'not accepted' };
+    await rmSaveToken(tok); rmAfterPair(); return { ok: true };
+  }
+  async function rmTest() { await ready; if (!rmBase()) return { ok: false, error: 'no-server' };
+    let version = null;
+    try { const h = await rmCall('/api/heartbeat', { auth: false }), j = h.json || {}; version = (j.SYSTEM && j.SYSTEM.VERSION) || j.VERSION || j.version || null; }
+    catch (e) { return { ok: false, error: rmWhy(e.code) }; }
+    if (!rmToken()) return { ok: false, version, error: 'no-token' };
+    try { const r = await rmCall('/api/platforms');
+      if (r.status === 401 || r.status === 403) return { ok: false, version, error: 'auth' };
+      if (!r.ok) return { ok: false, version, error: 'http-' + r.status };
+      return { ok: true, version, platforms: Array.isArray(r.json) ? r.json.length : 0 }; }
+    catch (e) { return { ok: false, version, error: rmWhy(e.code) }; }
+  }
+  // ----- the library -----
+  // a RomM platform → the Boxshelf console it belongs to (RomM's own slugs, else the folder names a console goes by), or null
+  function rmConsole(p) {
+    if (!rm.ix) { rm.ix = new Map(); for (const [id, list] of Object.entries(RM_SLUGS)) for (const s of list) if (!rm.ix.has(s)) rm.ix.set(s, id); }
+    if (!p) return null; const a = String(p.slug || '').toLowerCase().trim(), b = String(p.fs_slug || '').toLowerCase().trim();
+    const id = rm.ix.get(a) || rm.ix.get(b) || (a && consoleForName(a)) || (b && consoleForName(b)) || null;
+    return id && sysById[id] ? id : null;
+  }
+  function rmGame(it, p, cid) {
+    const files = (Array.isArray(it.files) ? it.files : []).map(f => ({ name: String(f.file_name || f.name || ''), size: rmNum(f.file_size_bytes), sha1: f.sha1_hash || null, md5: f.md5_hash || null }));
+    const multi = typeof it.has_multiple_files === 'boolean' ? it.has_multiple_files : files.length > 1, one = !multi && files.length === 1 ? files[0] : null;
+    const title = String(it.name || String(it.fs_name_no_ext || it.fs_name || '').replace(/\.[a-z0-9]{1,5}$/i, ''));
+    return { rommId: it.id, platformId: p.id, consoleId: cid, title, file: String(it.fs_name || ''), size: rmNum(it.fs_size_bytes) || files.reduce((a, f) => a + (f.size || 0), 0) || null, multi,
+      sha1: (one && one.sha1) || it.sha1_hash || null, md5: (one && one.md5) || it.md5_hash || null, files: multi ? files : [], updatedAt: it.updated_at || null };
+  }
+  function rmIndex() { const m = {}; for (const g of Object.values((rm.lib && rm.lib.games) || {})) (m[g.consoleId] || (m[g.consoleId] = [])).push(g); rm.byCon = m; }
+  async function rmCache() { const base = rmBase(); if (rm.lib && rm.lib.server === base) return rm.lib;
+    const o = await load('romm-library.json', null);
+    rm.lib = o && o.v === 1 && o.server === base && o.games && typeof o.games === 'object' ? o : { v: 1, server: base, at: null, platforms: {}, games: {}, skipped: null };
+    rmIndex(); return rm.lib; }
+  async function rmLocal() { if (!rm.local) { const o = await load('romm-local.json', {}); rm.local = o && typeof o === 'object' ? o : {}; } return rm.local; }
+  const rmOut = (c, extra) => Object.assign({ count: Object.keys(c.games || {}).length, at: c.at, skipped: c.skipped || { platforms: 0, games: 0, slugs: [] }, offline: false }, extra);
+  // every page of a platform's ROMs (after `since` when given), one after another, each in a quiet moment
+  async function rmPages(p, since, wait, take) {
+    for (let offset = 0, first = true; ; first = false) {
+      const q = new URLSearchParams({ platform_ids: String(p.id), limit: String(RM_PAGE), offset: String(offset), with_char_index: 'false', with_filter_values: 'false', with_rom_id_index: 'false', with_total: first ? 'true' : 'false' });
+      if (since) q.set('updated_after', since);
+      await wait(); const r = await rmCall('/api/roms?' + q, { wait });
+      if (r.status === 401 || r.status === 403) throw rmErr('auth');
+      if (!r.ok) throw rmErr('http-' + r.status);
+      const items = Array.isArray(r.json) ? r.json : (r.json && Array.isArray(r.json.items) ? r.json.items : []);
+      take(items); offset += items.length;
+      const total = r.json && typeof r.json.total === 'number' ? r.json.total : null;
+      if (!items.length || items.length < RM_PAGE || (total != null && offset >= total) || Array.isArray(r.json)) return;
+      await sleep(RM_PAUSE);
+    }
+  }
+  // all ROM ids of a platform in one light request (RomM's rom_id_index); null when the server doesn't give it
+  async function rmIdSweep(p, wait) {
+    const q = new URLSearchParams({ platform_ids: String(p.id), limit: '1', offset: '0', with_char_index: 'false', with_filter_values: 'false', with_rom_id_index: 'true', with_total: 'false' });
+    await wait(); const r = await rmCall('/api/roms?' + q, { wait });
+    if (r.status === 401 || r.status === 403) throw rmErr('auth');
+    if (!r.ok || !r.json || !Array.isArray(r.json.rom_id_index)) return null;
+    return new Set(r.json.rom_id_index.map(String));
+  }
+  async function rmDoSync(c, wait) {
+    let plats;
+    try { await wait(); const r = await rmCall('/api/platforms', { wait });
+      if (r.status === 401 || r.status === 403) return rmOut(c, { error: 'auth' });
+      if (!r.ok || !Array.isArray(r.json)) return rmOut(c, { offline: true, error: 'http-' + r.status });
+      plats = r.json; }
+    catch (e) { return rmOut(c, { offline: true, error: e.code || 'offline' }); }
+    const games = Object.assign({}, c.games), platforms = {}, skipped = { platforms: 0, games: 0, slugs: [] }, mapped = [];
+    let fetched = 0, removed = 0, changed = false;
+    const drop = k => { if (games[k]) { delete games[k]; removed++; } };
+    for (const p of plats) { if (!p || p.id == null) continue; if (rmConsole(p)) { mapped.push(p); continue; }
+      skipped.platforms++; skipped.games += rmNum(p.rom_count) || 0; skipped.slugs.push(String(p.slug || p.fs_slug || p.id)); }
+    try {
+      for (const p of mapped) {
+        const cid = rmConsole(p), prev = (c.platforms || {})[p.id], full = !prev || prev.consoleId !== cid || !prev.since;
+        const mine = () => Object.keys(games).filter(k => games[k].platformId === p.id);
+        let since = full ? null : prev.since; const seen = full ? new Set() : null;
+        const take = items => { for (const it of items) { if (!it || it.id == null) continue; if (seen) seen.add(String(it.id));
+          if (it.missing_from_fs === true) { drop(String(it.id)); continue; }
+          const g = rmGame(it, p, cid), old = games[it.id];
+          if (!old || old.updatedAt !== g.updatedAt || old.file !== g.file || old.title !== g.title || old.consoleId !== g.consoleId) changed = true;
+          games[it.id] = g; fetched++;
+          if (it.updated_at && (!since || rmTs(it.updated_at) > rmTs(since))) since = it.updated_at; } };
+        if (full && rmNum(p.rom_count) === 0) mine().forEach(drop);
+        else {
+          await rmPages(p, full ? null : prev.since, wait, take);
+          if (full) { for (const k of mine()) if (!seen.has(k)) drop(k); }
+          else { await sleep(RM_PAUSE); const ids = await rmIdSweep(p, wait);
+            if (ids) { for (const k of mine()) if (!ids.has(k)) drop(k); }
+            else if (rmNum(p.rom_count) != null && rmNum(p.rom_count) !== mine().length) { const all = new Set();
+              await rmPages(p, null, wait, items => { for (const it of items) if (it && it.id != null) all.add(String(it.id)); take(items); });
+              for (const k of mine()) if (!all.has(k)) drop(k); } }
+        }
+        platforms[p.id] = { id: p.id, slug: p.slug || null, name: p.display_name || p.custom_name || p.name || null, consoleId: cid, since, count: mine().length };
+        await sleep(RM_PAUSE);
+      }
+    } catch (e) { log('RomM: sync stopped:', (e && (e.code || e.message)) || ''); return rmOut(c, { offline: !!e && e.code === 'offline', error: (e && e.code) || 'error' }); }
+    for (const k of Object.keys(games)) if (!platforms[games[k].platformId]) drop(k);
+    if (rm.lib !== c || !rmOn()) return rmOut(c, { error: 'not paired' }); // (signed out or another server meanwhile: nothing kept)
+    c.games = games; c.platforms = platforms; c.skipped = skipped; c.at = new Date().toISOString(); rmIndex();
+    await wait(); await store('romm-library.json', c);
+    return rmOut(c, { fetched, removed, changed: changed || removed > 0 });
+  }
+  // a sync (never two at once). Background: each step waits for a quiet shelf; manual (Settings): at most 3 s per step
+  function rmSync(manual) {
+    if (rm.syncing) return rm.syncing;
+    if (!rmOn()) return Promise.resolve(null);
+    const wait = () => idleTurn(manual ? 3000 : 0);
+    rm.syncing = (async () => { const c = await rmCache(), r = await rmDoSync(c, wait); rm.offline = !!r.offline;
+      if (r.error === 'not paired') return r; // (signed out, paired again or another server meanwhile)
+      log('RomM sync:', r.count, 'games', r.offline ? '(offline: the saved copy)' : '', r.skipped && r.skipped.platforms ? `(${r.skipped.platforms} platforms Boxshelf has no shelf for)` : '');
+      if (r.changed) rmChanged(); return r; })()
+      .catch(e => { log('RomM sync', e && e.message); return null; }).finally(() => { rm.syncing = null; });
+    return rm.syncing;
+  }
+  // this console's RomM games not on the shelf yet (not at their place, not where a download went, no game of that title):
+  // added to `games` with the cloud badge. Needs the console's first games folder (where Play will put them)
+  function rmMerge(s, c, games) {
+    if (!rmOn() || (st.config.romm && st.config.romm.cloud === false) || !rm.lib || rm.lib.server !== rmBase() || !rm.byCon) return 0;
+    const L = rm.byCon[s.id]; if (!L || !L.length) return 0;
+    const dir = (c.romDirs || [])[0], tree = dir && st.folders[dir]; if (!tree) return 0;
+    const have = new Set(), titles = new Set(), done = rm.local || {}; let n = 0;
+    for (const g of games) { have.add(String(g.file || '').toLowerCase()); for (const d of g.discs || []) have.add(String(d).toLowerCase());
+      titles.add(String(g.title || '').toLowerCase()); if (g.fileTitle) titles.add(String(g.fileTitle).toLowerCase()); }
+    for (const r of L) {
+      const name = rmSafe(r.file || r.title), file = dir + '/' + name, got = done[r.rommId], info = T.cleanTitle(name, { updateWords: s.id === 'sw' }) || {}, title = String(r.title || info.title || name);
+      if (have.has(file.toLowerCase()) || (got && got.file && have.has(String(got.file).toLowerCase())) || titles.has(title.toLowerCase()) || (info.title && titles.has(String(info.title).toLowerCase()))) continue;
+      have.add(file.toLowerCase()); titles.add(title.toLowerCase());
+      games.push({ kind: 'rom', id: s.id + ':' + file, title, region: info.region || '', disc: 0, file, ext: r.multi ? '' : ((/\.([a-z0-9]{1,5})$/i.exec(name) || [])[1] || '').toLowerCase(),
+        sizeBytes: r.size || 0, added: rmTs(r.updatedAt), art: {}, romTree: tree, discs: [file], romm: { id: r.rommId, size: r.size || null, multi: !!r.multi, cloud: true } });
+      n++;
+    }
+    if (n) games.sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base', numeric: true }));
+    return n;
+  }
+  // ----- Play on a RomM game not downloaded yet: into its console's first games folder (→ the file to start) -----
+  const rmMb = n => n >= 1e9 ? (n / 1e9).toFixed(1) + ' GB' : Math.max(1, Math.round(n / 1e6)) + ' MB';
+  const rmSay = t => { try { if (rm.say) rm.say(t); } catch {} };
+  if (N.addListener) Promise.resolve().then(() => N.addListener('rommProgress', e => { if (!e || !rm.dl || String(e.id) !== rm.dl) return;
+    const t = +e.total || 0, got = +e.received || 0;
+    if (e.phase === 'download') rmSay(t > 0 ? `Getting it from RomM… ${Math.min(100, Math.floor(100 * got / t))}% of ${rmMb(t)}` : `Getting it from RomM… ${rmMb(got)}`);
+    else if (e.phase === 'verify') rmSay('Checking it…'); else if (e.phase === 'extract') rmSay('Unpacking it…'); })).catch(e => log('RomM listener', e && e.message));
+  async function rmFetch(systemId, g) {
+    const s = sysById[systemId] || {};
+    if (!N.rommDownload) throw new Error("This Boxshelf build can't download games from RomM.");
+    if (!rmOn()) throw new Error('RomM isn\'t paired: pair it in Settings → Accounts & services → RomM.');
+    const c = await rmCache(), r = c.games[g.romm.id]; if (!r) throw new Error("RomM doesn't have that game any more.");
+    const sc = st.config.systems[systemId] || {}, dir = (sc.romDirs || [])[0], tree = dir && st.folders[dir];
+    if (!tree) throw new Error(`Boxshelf has no games folder for ${s.name || systemId} to put it in. Pick one in Settings → ${s.name || 'Consoles'}.`);
+    const name = rmSafe(r.file || r.title), url = rmBase() + '/api/roms/' + encodeURIComponent(r.rommId) + '/content/' + encodeURIComponent(r.file || name);
+    rm.dl = String(r.rommId); rmSay('Getting it from RomM…');
+    try {
+      const res = await N.rommDownload({ id: String(r.rommId), url, tree, name, size: r.size || 0, multi: !!r.multi, sha1: r.sha1 || '', md5: r.md5 || '',
+        files: (r.files || []).map(f => ({ name: String(f.name || ''), size: f.size == null ? -1 : f.size, sha1: f.sha1 || '', md5: f.md5 || '' })) }); // (no nulls: -1 / '' = not known)
+      if (!res || !res.uri || !res.docId) throw new Error('error');
+      const file = idToPath(res.docId), L = await rmLocal(); L[r.rommId] = { file, uri: res.uri }; store('romm-local.json', L);
+      log('RomM download:', res.already ? 'already there' : 'done', res.verified ? '(checked: ' + res.verified + ')' : '');
+      return { file, uri: res.uri };
+    } catch (e) {
+      const code = String((e && e.message) || '').trim();
+      const why = { cancelled: 'Download stopped. Press Play again to carry on from where it was.', 'hash-mismatch': "The download didn't match RomM's copy (checked and removed). Press Play to try again.",
+        auth: 'RomM turned Boxshelf away: pair it again in Settings → Accounts & services → RomM.', 'no-token': 'RomM isn\'t paired: pair it in Settings → Accounts & services → RomM.',
+        'not-found': "RomM doesn't have that game any more.", 'no-space': 'Not enough free space for it on this device.', offline: "RomM can't be reached right now.", cleartext: RM_CLEAR,
+        'no-folder': `Boxshelf can't write into ${s.name || 'that console'}'s games folder. Pick it again in Settings → ${s.name || 'Consoles'}.`, 'zip-bad': `${r.title} came as a zip Boxshelf couldn't unpack.`,
+        busy: 'Another RomM download is still going.', rename: "The download couldn't be given its name in the games folder." }[code];
+      throw new Error(why || ('RomM: ' + (code || 'the download failed')));
+    } finally { rm.dl = null; }
+  }
+  // ----- the pairing QR code (main/companion.js qrMatrix / qrSvg: byte mode, error correction M, versions 1–10) -----
+  const QR_FA = [1, 0, 1, 1, 1, 0, 1, 0, 0, 0, 0], QR_ECC = [0, 10, 16, 26, 18, 24, 16, 18, 22, 22, 26], QR_BLOCKS = [0, 1, 1, 1, 2, 2, 4, 4, 4, 5, 5];
+  const qrMul = (x, y) => { let z = 0; for (let i = 7; i >= 0; i--) { z = (z << 1) ^ ((z >>> 7) * 0x11D); z ^= ((y >>> i) & 1) * x; } return z & 0xFF; };
+  function qrDivisor(n) { const r = new Array(n).fill(0); r[n - 1] = 1; let root = 1; for (let i = 0; i < n; i++) { for (let j = 0; j < n; j++) { r[j] = qrMul(r[j], root); if (j + 1 < n) r[j] ^= r[j + 1]; } root = qrMul(root, 2); } return r; }
+  function qrRemainder(data, div) { const r = div.map(() => 0); for (const b of data) { const f = b ^ r.shift(); r.push(0); div.forEach((c, i) => { r[i] ^= qrMul(c, f); }); } return r; }
+  const qrRaw = v => { let r = (16 * v + 128) * v + 64; if (v >= 2) { const n = Math.floor(v / 7) + 2; r -= (25 * n - 10) * n - 55; if (v >= 7) r -= 36; } return r; };
+  const qrData = v => Math.floor(qrRaw(v) / 8) - QR_ECC[v] * QR_BLOCKS[v];
+  function qrAlign(v) { if (v === 1) return []; const n = Math.floor(v / 7) + 2, step = Math.ceil((v * 4 + 4) / (n * 2 - 2)) * 2, r = [6]; for (let p = v * 4 + 10; r.length < n; p -= step) r.splice(1, 0, p); return r; }
+  function qrMatrix(text) {
+    const bytes = [...new TextEncoder().encode(String(text))];
+    let v = 1; while (v <= 10 && 4 + (v < 10 ? 8 : 16) + bytes.length * 8 > qrData(v) * 8) v++;
+    if (v > 10) throw new Error('Too long for a QR code.');
+    const bits = [], put = (val, n) => { for (let i = n - 1; i >= 0; i--) bits.push((val >>> i) & 1); };
+    put(4, 4); put(bytes.length, v < 10 ? 8 : 16); bytes.forEach(b => put(b, 8));
+    const cap = qrData(v) * 8; put(0, Math.min(4, cap - bits.length)); put(0, (8 - bits.length % 8) % 8);
+    for (let pad = 0xEC; bits.length < cap; pad ^= 0xEC ^ 0x11) put(pad, 8);
+    const data = []; for (let i = 0; i < bits.length; i += 8) data.push(parseInt(bits.slice(i, i + 8).join(''), 2));
+    const nb = QR_BLOCKS[v], ecl = QR_ECC[v], raw = Math.floor(qrRaw(v) / 8), nShort = nb - raw % nb, shortLen = Math.floor(raw / nb), div = qrDivisor(ecl), blocks = [];
+    for (let i = 0, k = 0; i < nb; i++) { const d = data.slice(k, k + shortLen - ecl + (i < nShort ? 0 : 1)); k += d.length; const e = qrRemainder(d, div); if (i < nShort) d.push(0); blocks.push(d.concat(e)); }
+    const cw = []; for (let i = 0; i < blocks[0].length; i++) blocks.forEach((b, j) => { if (i !== shortLen - ecl || j >= nShort) cw.push(b[i]); });
+    const size = v * 4 + 17, M = [...Array(size)].map(() => new Array(size).fill(false)), F = [...Array(size)].map(() => new Array(size).fill(false));
+    const set = (x, y, d) => { M[y][x] = !!d; F[y][x] = true; };
+    for (let i = 0; i < size; i++) { set(6, i, i % 2 === 0); set(i, 6, i % 2 === 0); }
+    for (const [cx, cy] of [[3, 3], [size - 4, 3], [3, size - 4]]) for (let dy = -4; dy <= 4; dy++) for (let dx = -4; dx <= 4; dx++) { const x = cx + dx, y = cy + dy, dist = Math.max(Math.abs(dx), Math.abs(dy)); if (x >= 0 && x < size && y >= 0 && y < size) set(x, y, dist !== 2 && dist !== 4); }
+    const ap = qrAlign(v), na = ap.length;
+    for (let i = 0; i < na; i++) for (let j = 0; j < na; j++) { if ((i === 0 && j === 0) || (i === 0 && j === na - 1) || (i === na - 1 && j === 0)) continue; for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) set(ap[i] + dx, ap[j] + dy, Math.max(Math.abs(dx), Math.abs(dy)) !== 1); }
+    const format = mask => { const d = mask; let r = d; for (let i = 0; i < 10; i++) r = (r << 1) ^ ((r >>> 9) * 0x537); const b = ((d << 10) | r) ^ 0x5412, bit = i => (b >>> i) & 1;
+      for (let i = 0; i <= 5; i++) set(8, i, bit(i)); set(8, 7, bit(6)); set(8, 8, bit(7)); set(7, 8, bit(8)); for (let i = 9; i < 15; i++) set(14 - i, 8, bit(i));
+      for (let i = 0; i < 8; i++) set(size - 1 - i, 8, bit(i)); for (let i = 8; i < 15; i++) set(8, size - 15 + i, bit(i)); set(8, size - 8, true); };
+    format(0);
+    if (v >= 7) { let r = v; for (let i = 0; i < 12; i++) r = (r << 1) ^ ((r >>> 11) * 0x1F25); const b = (v << 12) | r; for (let i = 0; i < 18; i++) { const c = (b >>> i) & 1, a = size - 11 + i % 3, k = Math.floor(i / 3); set(a, k, c); set(k, a, c); } }
+    let i = 0; for (let right = size - 1; right >= 1; right -= 2) { if (right === 6) right = 5; for (let vert = 0; vert < size; vert++) for (let j = 0; j < 2; j++) { const x = right - j, y = ((right + 1) & 2) === 0 ? size - 1 - vert : vert; if (!F[y][x] && i < cw.length * 8) { M[y][x] = ((cw[i >>> 3] >>> (7 - (i & 7))) & 1) === 1; i++; } } }
+    const MASKS = [(x, y) => (x + y) % 2 === 0, (x, y) => y % 2 === 0, x => x % 3 === 0, (x, y) => (x + y) % 3 === 0, (x, y) => (Math.floor(x / 3) + Math.floor(y / 2)) % 2 === 0, (x, y) => x * y % 2 + x * y % 3 === 0, (x, y) => (x * y % 2 + x * y % 3) % 2 === 0, (x, y) => ((x + y) % 2 + x * y % 3) % 2 === 0];
+    const apply = m => { for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) if (!F[y][x] && MASKS[m](x, y)) M[y][x] = !M[y][x]; };
+    const penalty = () => { let p = 0, dark = 0; for (let y = 0; y < size; y++) { let rx = 1, ry = 1; for (let x = 0; x < size; x++) { if (M[y][x]) dark++;
+      if (x > 0) { if (M[y][x] === M[y][x - 1]) { rx++; if (rx === 5) p += 3; else if (rx > 5) p++; } else rx = 1; if (M[x][y] === M[x - 1][y]) { ry++; if (ry === 5) p += 3; else if (ry > 5) p++; } else ry = 1; }
+      if (x > 0 && y > 0 && M[y][x] === M[y][x - 1] && M[y][x] === M[y - 1][x] && M[y][x] === M[y - 1][x - 1]) p += 3; } }
+      const fpat = get => { let k = 0; for (let a = 0; a < size; a++) for (let b = 0; b + 10 < size; b++) { let s1 = true, s2 = true; for (let t = 0; t < 11; t++) { const m = get(a, b + t); if (m !== !!QR_FA[t]) s1 = false; if (m !== !!QR_FA[10 - t]) s2 = false; if (!s1 && !s2) break; } if (s1) k++; if (s2) k++; } return k; };
+      p += 40 * (fpat((a, b) => M[a][b]) + fpat((a, b) => M[b][a]));
+      return p + Math.floor(Math.abs(dark * 20 - size * size * 10) / (size * size)) * 10; };
+    let best = 0, bp = Infinity; for (let m = 0; m < 8; m++) { apply(m); format(m); const p = penalty(); if (p < bp) { bp = p; best = m; } apply(m); }
+    apply(best); format(best); return M;
+  }
+  function qrSvg(text) { const M = qrMatrix(text), n = M.length, q = 4; let d = '';
+    for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) if (M[y][x]) d += `M${x + q} ${y + q}h1v1h-1z`;
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${n + q * 2} ${n + q * 2}" shape-rendering="crispEdges"><rect width="100%" height="100%" fill="#fff"/><path d="${d}" fill="#000"/></svg>`; }
+
   // ---------- the API ----------
   const consoles = () => SYS.map(s => { const e = E[s.emus[0]] || {}; return { id: s.id, name: s.name, emulatorName: e.name || '', exeNames: [e.name || 'emulator app'], extensions: s.extensions, gameArgs: '', android: true }; });
   const over = {
     platform: { os: 'android', caps: { steam: false, power: false, homeMenu: false, emuSettings: false, autostart: false, displays: false, folders: false, companionServer: false, winMode: false, dolphinIpl: false, raAutoConfig: false } },
     getConfig: async () => { await ready; return { config: JSON.parse(JSON.stringify(st.config)), consoles: consoles(), apps: [], appRoot: 'This device', version: 'Android' }; },
-    saveConfig: async c => { await ready; const was = st.config.ui && st.config.ui.autoCovers, wasFull = fullOn(), wasSs = ssSig(), dirsWas = cfgDirs(st.config);
+    saveConfig: async c => { await ready; const was = st.config.ui && st.config.ui.autoCovers, wasFull = fullOn(), wasSs = ssSig(), dirsWas = cfgDirs(st.config), rmTok = rmToken(), rmWas = rmBase(), rmBound = String(((st.config.keys || {}).rommTokenServer) || '') || rmOrigin(rmWas);
       const games = st.config.games; st.config = JSON.parse(JSON.stringify(c)); // (beta.10) games' own names are renameGame's alone, as on the PC (an older copy of the settings never undoes one)
       if (games) st.config.games = games; else delete st.config.games;
+      // (beta.12) RomM's sign-in is the pairing's alone (set by pairing, cleared by Sign out), as on the PC: a screen's copy never changes it
+      // (beta.12) ...and it stays only while the address still leads to the server it was paired with (rmBound): another
+      // server never gets it (it's dropped, and that server is paired on its own), as on the PC (main.js rommKeysFor)
+      { const k = st.config.keys, keep = !!rmTok && !!rmBound && rmOrigin(rmBase()) === rmBound;
+        if (rmTok && !keep) log('RomM: the server address changed, so the old sign-in was dropped (it belongs to the other server)');
+        if (keep) st.config.keys = Object.assign({}, k || {}, { rommToken: rmTok, rommTokenServer: rmBound });
+        else if (k && ('rommToken' in k || 'rommTokenServer' in k)) { st.config.keys = Object.assign({}, k); delete st.config.keys.rommToken; delete st.config.keys.rommTokenServer; } }
+      if (rmBase() !== rmWas) { rm.lib = null; rm.byCon = null; rm.pair = null; rm.synced = false; rm.offline = false; } // (another server: its own library, read on the next scan)
       await store('config.json', st.config);
+      awakeSync();
       try { foldersDropped(dirsWas, st.config); } catch (e) { log('folders', e && e.message); }
       const on = st.config.ui && st.config.ui.autoCovers !== false, ssNow = ssSig();
       if (ssNow !== wasSs) { ssCredsChanged(); delete apiSt.screenscraper; }
@@ -1803,7 +2170,14 @@ window.BS_QUIET = () => ({ running: !!running, artPaused: !!art.paused, hidden: 
     previewYtStop: async () => ytOff(),
     onPreviewYt: fn => { ytFns.push(fn); },
     cachedLibrary: async () => { await ready; return handOut(st.library); },
-    launchGame: async (systemId, file) => { await ready; const g = gameByFile(file); if (!g) throw new Error('That game is no longer in its folder. Rescan to update the shelf.'); return start(systemId, g); },
+    launchGame: async (systemId, file) => { await ready; const g = gameByFile(file); if (!g) throw new Error('That game is no longer in its folder. Rescan to update the shelf.');
+      if (!(g.romm && g.romm.cloud)) return start(systemId, g);
+      // (beta.12) a RomM game not on the device yet: downloaded first (its progress on the boot slide, B stops it), then
+      // started like any game; the shelf is read again afterwards (its cloud goes)
+      const got = await rmFetch(systemId, g);
+      g.romm = Object.assign({}, g.romm, { cloud: false });
+      try { return await start(systemId, Object.assign({}, g, { uri: got.uri, file: got.file, id: systemId + ':' + got.file, discs: [got.file] })); }
+      finally { setTimeout(rmChanged, 0); } },
     launchEmulator: systemId => start(systemId, null),
     // (0.3.5) the apps on the device with a launcher icon (the bottom screen's Shortcuts: Spotify, a browser, any app)
     androidApps: async () => { await ready; const inst = await apps(true);
@@ -1858,9 +2232,46 @@ window.BS_QUIET = () => ({ running: !!running, artPaused: !!art.paused, hidden: 
       if (Object.keys(cur).length) games[key] = cur; else delete games[key];
       st.config.games = games; await store('config.json', st.config); log('game renamed:', systemId, t ? 'to a name of its own' : 'back to its file name');
       return { ok: true, title: t }; },
+    // (beta.12) Details → Emulator, as the PC (main.js game:emulator): one game in another emulator app than the rest of
+    // its shelf, and for RetroArch another core, kept in config.games["<console>:<file>"].emulator / .core. A plain list:
+    // the shelf's own first (clears the choice), then the emulator apps for this console that are installed
+    gameEmulator: async id => { await ready;
+      const m = /^([a-z0-9]+):(.+)$/i.exec(String(id || '')), s = m && sysById[m[1]]; if (!s) throw new Error('Only console games can have their own emulator.');
+      const g = gameFor(m[1], m[2]), key = m[1] + ':' + g.file, inst = await apps(true), c = st.config.systems[m[1]] || {};
+      const games = Object.assign({}, st.config.games || {}), cur = Object.assign({}, games[key] || {});
+      const shelfPkg = pkgOf(c.emulator), shelfE = shelfPkg && emuFor(shelfPkg), items = [{ pkg: '@shelf', label: `The shelf's emulator${shelfE ? ' (' + shelfE.name + ')' : ''}` }], seen = new Set();
+      for (const eid of s.emus || []) { const e = E[eid]; if (!e) continue; for (const [p, label] of inst) if (((e.packages || []).includes(p) || (e.match && e.match.test(p))) && !seen.has(p)) { seen.add(p); items.push({ pkg: p, label: label === e.name ? label : `${label} — ${e.name}` }); } }
+      if (items.length < 2) throw new Error(`No other emulator for ${s.name} is installed.`);
+      const r = await N.chooseApp({ title: `Emulator for ${String(g.title || 'this game').slice(0, 60)}`, items }); if (!r || r.canceled) return { ok: false, games: st.config.games || {} };
+      if (r.pkg === '@shelf') { delete cur.emulator; delete cur.core; }
+      else { const e = emuFor(r.pkg); cur.emulator = e ? fmtEmu(e, r.pkg) : `${String(r.label || r.pkg).replace(/ — .*$/, '')} (${r.pkg})`; delete cur.core;
+        // RetroArch (the game is handed to a core): which core, when this console has more than one
+        if (e && /\$CORE/.test(JSON.stringify(e.launch || {})) && (s.cores || []).length > 1) {
+          const rc = await N.chooseApp({ title: 'Which core?', items: [{ pkg: '@shelfcore', label: `The shelf's core (${c.core || s.cores[0]})` }, ...s.cores.map(k => ({ pkg: '@core:' + k, label: k }))] });
+          const k = rc && !rc.canceled && /^@core:(.+)$/.exec(String(rc.pkg || '')); if (k && s.cores.includes(k[1])) cur.core = k[1]; } }
+      if (Object.keys(cur).length) games[key] = cur; else delete games[key];
+      st.config.games = games; await store('config.json', st.config); log('game emulator:', m[1], cur.emulator ? 'its own' : 'the shelf\'s', cur.core ? '(its own core)' : '');
+      return { ok: true, games }; },
     // (beta.10) Settings' "Open site" links: https addresses only, in the device's browser (the demo's pretend one said "Opened" and opened nothing)
     openExternal: async url => { const u = String(url || '').trim(); if (!/^https:\/\/[^\s/]+/i.test(u)) throw new Error('Only https links can be opened'); await N.openUrl({ url: u }); return true; },
-    consoleForFolder: (name, files) => consoleForName(name) || (files ? consoleForFiles(files) : null) // tests
+    consoleForFolder: (name, files) => consoleForName(name) || (files ? consoleForFiles(files) : null), // tests
+    // (beta.12) RomM (Settings → Accounts & services → RomM; the demo's pretend versions in mock.js must not answer on the device)
+    rommStatus: async () => { await ready; const on = rmOn(), c = on ? await rmCache() : null;
+      return { server: rmBase(), paired: on, pairing: !!rm.pair, syncing: !!rm.syncing, downloads: rm.dl ? [rm.dl] : [], count: c ? Object.keys(c.games).length : null, at: c ? c.at : null, offline: !!rm.offline, skipped: c ? c.skipped : null }; },
+    rommPairStart: () => rmPairStart(),
+    rommPairPoll: () => rmPairPoll(),
+    rommPairCancel: async () => { rm.pair = null; return true; },
+    rommPairCode: code => rmPairCode(code),
+    rommTest: () => rmTest(),
+    rommSync: async () => { await ready; if (!rmOn()) return { ok: false, error: rmBase() ? 'not paired' : 'no-server' };
+      const r = await rmSync(true); return r ? { ok: !r.error, count: r.count, offline: !!r.offline, error: r.error ? rmWhy(r.error) : null } : { ok: false, error: 'busy' }; },
+    rommForget: async () => { await ready; rm.pair = null; rm.lib = null; rm.byCon = null; rm.offline = false; rm.synced = false;
+      if (st.config.keys && ('rommToken' in st.config.keys || 'rommTokenServer' in st.config.keys)) { st.config.keys = Object.assign({}, st.config.keys); delete st.config.keys.rommToken; delete st.config.keys.rommTokenServer; await store('config.json', st.config); }
+      await store('romm-library.json', {}); rmChanged(); return true; }, // (games already downloaded stay where they are)
+    rommCancel: async () => { if (!rm.dl) return false; try { await N.rommCancel(); } catch (e) { log('RomM cancel', e && e.message); } return true; },
+    // the boot slide's status line (a RomM download's progress), and the shelf told to read the library again
+    onLaunchStatus: fn => { rm.say = fn; },
+    onLibraryChanged: fn => { if (typeof fn === 'function') rm.libFns.push(fn); }
   };
   // Settings shows these only when they exist; Android doesn't have them (yet)
   for (const k of ['backupSettings', 'restoreSettings', 'reportProblem', 'companionSet', 'companionState', 'getAutostart', 'setAutostart', 'moveToDisplay', 'winMode', 'raEmulators', 'findIpl']) delete api[k];
@@ -1960,17 +2371,23 @@ window.BS_QUIET = () => ({ running: !!running, artPaused: !!art.paused, hidden: 
       openUrl: async ({ url }) => { window.__fakeCalls = (window.__fakeCalls || []).concat(['openUrl:' + url]); }, // (beta.10)
       dropPdf: async ({ path }) => { (__fakeMan.dropped = __fakeMan.dropped || []).push(String(path)); return { removed: true }; }, // (beta.10)
       copyPreview: async ({ uri }) => { window.__copied = (window.__copied || []).concat(String(uri)); return { ok: true, path: window.__previewUrl || '/__test/preview.webm' }; }, // (beta.9: the video played from the app's cache)
-    listFiles: async ({ uri }) => { const id = idOfTree(uri); return { files: (lib[id] || []).map(n => ({ name: n, docId: id + '/' + n, dir: '', ext: n.split('.').pop().toLowerCase(), uri: treeOnly(uri) + '/document/' + encodeURIComponent(id + '/' + n), size: 1e8, mtime: 1.7e12 })) }; },
+    listFiles: async ({ uri }) => { if (window.__fakeListFail) throw new Error('pretend: the folder can\'t be reached'); const id = idOfTree(uri); return { files: (lib[id] || []).map(n => ({ name: n, docId: id + '/' + n, dir: '', ext: n.split('.').pop().toLowerCase(), uri: treeOnly(uri) + '/document/' + encodeURIComponent(id + '/' + n), size: 1e8, mtime: 1.7e12 })) }; },
       listDirs: async ({ uri }) => { const id = idOfTree(uri), kids = new Set();
         for (const k of [...Object.keys(lib), ...Object.keys(dirs)]) if (k.startsWith(id + '/')) kids.add(k.slice(id.length + 1).split('/')[0]);
         return { dirs: [...kids].map(n => ({ name: n, docId: id + '/' + n, uri: treeOnly(uri) + '/document/' + encodeURIComponent(id + '/' + n) })) }; },
       artExists: async ({ paths }) => ({ missing: (paths || []).filter(p => !shown.has(p)) }),
       artForget: async ({ paths }) => { (__fakeArt.forgot = __fakeArt.forgot || []).push(...(paths || [])); return { removed: (paths || []).length }; },
-      chooseApp: async ({ items }) => ({ pkg: items[0].pkg, label: items[0].label }),
+      // (the first item; tests can line up picks: window.__fakeChoose = ['part of a label or package', …], one used per list shown)
+    chooseApp: async ({ items, title }) => { (window.__fakeLists = window.__fakeLists || []).push({ title, items }); const q = Array.isArray(window.__fakeChoose) && window.__fakeChoose.length ? window.__fakeChoose.shift() : null;
+      const it = (q != null && items.find(x => String(x.label).includes(q) || String(x.pkg).includes(q))) || items[0]; return { pkg: it.pkg, label: it.label }; },
       homeStatus: async () => ({ isDefault: !!window.__fakeIsHome, current: window.__fakeIsHome ? { pkg: 'io.github.boxshelf', label: 'Boxshelf' } : { pkg: 'com.cocoon.launcher', label: 'Cocoon' },
         launchers: [{ pkg: 'com.cocoon.launcher', label: 'Cocoon' }, { pkg: 'com.ayn.launcher', label: 'AYN Launcher' }] }),
       openHomeSettings: async () => { window.__fakeCalls = (window.__fakeCalls || []).concat(['openHomeSettings']); },
       openAndroidSettings: async () => { window.__fakeCalls = (window.__fakeCalls || []).concat(['openAndroidSettings']); },
+      openSettingsPage: async o => { window.__fakeCalls = (window.__fakeCalls || []).concat(['openSettingsPage:' + (o && o.page)]); },
+      // (a coloured square per app, as Android's drawn icon would come back)
+      appIcons: async ({ pkgs }) => { const icons = {}; (pkgs || []).slice(0, 40).forEach((p, n) => { icons[p] = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96"><rect width="96" height="96" rx="22" fill="hsl(${(n * 47) % 360},60%,48%)"/></svg>`); });
+        (window.__fakeIconAsks = window.__fakeIconAsks || []).push((pkgs || []).length); return { icons }; },
       launchHome: async o => { window.__fakeCalls = (window.__fakeCalls || []).concat(['launchHome:' + (o && o.pkg)]); },
       closeApp: async () => { window.__fakeCalls = (window.__fakeCalls || []).concat(['closeApp']); },
       fireHome: () => (listeners.home || []).forEach(f => f({})),
@@ -2004,7 +2421,9 @@ window.BS_QUIET = () => ({ running: !!running, artPaused: !!art.paused, hidden: 
       discId: async ({ uri }) => (/Pikmin/.test(decodeURIComponent(uri)) ? { id: 'GPIE01' } : {}),
       // ScreenScraper: one game found for any file, with every kind of media (the addresses carry a pretend sign-in, as the
       // real answers do, which must never reach a download); SteamGridDB isn't there
-      httpText: async ({ url, ss }) => {
+      httpText: async ({ url, ss, romm, ...more }) => {
+        // (beta.12) RomM: a pretend server only when a test brings one (window.__fakeRomm, ci/romm-android-pass.js); else unreachable, as offline
+        if (romm) { if (!window.__fakeRomm) throw new Error('Offline or blocked: pretend'); return __fakeRomm.http(Object.assign({ url }, more)); }
         // the Internet Archive: a 3-page Pikmin booklet (and a strategy guide, which must lose); nothing for the rest
         if (/archive\.org\/advancedsearch/.test(url)) { __fakeMan.search.push(decodeURIComponent(url)); const pik = /Pikmin/.test(decodeURIComponent(url));
           return { status: 200, text: JSON.stringify({ response: { docs: pik ? [{ identifier: 'pikmin-strategy', title: 'Pikmin Official Strategy Guide (GameCube)', downloads: 900 }, { identifier: 'pikmin-gc-manual', title: 'Pikmin (GameCube) Instruction Booklet', language: 'eng', downloads: 120 }] : [] } }) }; }
@@ -2051,6 +2470,13 @@ window.BS_QUIET = () => ({ running: !!running, artPaused: !!art.paused, hidden: 
         tell({ phase: 'split', pct: 100, got: 2, total: 2 });
         const at = Date.now(); write('lb-meta.json', { v: 1, at, plats, counts, bytes: 4096 }); return { ok: true, at, plats, counts, bytes: 4096 }; },
       lbCancel: async () => { if (window.__fakeLb) __fakeLb.cancelled = true; return { ok: true }; },
+      // (beta.12) RomM downloads, through the test's pretend server (its progress as "rommProgress" events); a finished one
+      // is a file in that games folder from then on, so the next scan finds it
+      rommDownload: async o => { if (!window.__fakeRomm) throw new Error('offline');
+        const r = await __fakeRomm.download(o, e => (listeners.rommProgress || []).forEach(f => f(e)));
+        if (r && r.ok && r.name && !r.dir) { const id = idOfTree(o.tree); (lib[id] = lib[id] || []).includes(r.name) || lib[id].push(r.name); }
+        return r; },
+      rommCancel: async () => ({ ok: !!(window.__fakeRomm && __fakeRomm.cancel()) }),
       addListener: (ev, fn) => { (listeners[ev] = listeners[ev] || []).push(fn); }
     };
   }

@@ -2,7 +2,7 @@
    (1240 x 1080 on the Thor), so it looks the same at any pixel density. Every animation is transform / opacity only
    (the compositor runs them): this page shares the WebView's main thread with the shelf on the top screen. */
 :root{--bg:#0b0b14;--ink:#f3f5fb;--dim:rgba(243,245,251,.64);--faint:rgba(243,245,251,.4);--line:rgba(255,255,255,.1);
-  --card:rgba(255,255,255,.045);--accent:#9d8cff;--ui:'Lexend',system-ui,-apple-system,'Segoe UI',sans-serif;
+  --card:rgba(255,255,255,.045);--accent:#9d8cff;--ui:'Mona Sans',system-ui,-apple-system,'Segoe UI',sans-serif;
   --ease:cubic-bezier(.2,.8,.2,1);color-scheme:dark}
 *{box-sizing:border-box}
 html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);overflow:hidden;font-family:var(--ui);
@@ -132,6 +132,10 @@ main{position:absolute;left:0;right:0;top:44px;bottom:84px}
 .umd .media .disc{border-radius:18px 18px 10px 10px}
 .umd .media .disc img,.umd .media .disc .lab{inset:12% 14% 22% 14%;width:auto;height:auto;border-radius:50%}
 .umd .media .disc::after{display:none}
+/* (beta.12) a cartridge's or UMD's own picture is a photo of the whole thing: shown as it is, not as a label on a drawn one */
+.cart .media .disc.art,.umd .media .disc.art{background:none;box-shadow:none;overflow:visible}
+.cart .media .disc.art img,.umd .media .disc.art img{inset:0;width:100%;height:100%;border-radius:0;object-fit:contain;filter:drop-shadow(0 8px 14px rgba(0,0,0,.5))}
+.cart .media .disc.art::after,.umd .media .disc.art::after{display:none}
 .case.out .media{transform:translate3d(calc(var(--w)*.06),calc(var(--h)*-.12),150px) rotateX(8deg)}
 .cart.out .media,.umd.out .media{transform:translate3d(calc(var(--w)*.04),calc(var(--h)*-.16),150px) rotateX(6deg)}
 
@@ -263,6 +267,9 @@ main{position:absolute;left:0;right:0;top:44px;bottom:84px}
 .disc-solo.umd .ds-front img,.disc-solo.umd .ds-front .lab{inset:12% 14% 22% 14%;width:auto;height:auto;border-radius:50%}
 .disc-solo.cart .ds-face::after{left:22%;right:22%;top:auto;bottom:7%;width:auto;height:6%;transform:none;border-radius:2px;background:rgba(0,0,0,.35);box-shadow:none}
 .disc-solo.umd .ds-face::after{display:none}
+.disc-solo.cart.art .ds-front,.disc-solo.umd.art .ds-front{background:none;box-shadow:none;overflow:visible}
+.disc-solo.cart.art .ds-front img,.disc-solo.umd.art .ds-front img{inset:0;width:100%;height:100%;border-radius:0;object-fit:contain;filter:drop-shadow(0 14px 22px rgba(0,0,0,.5))}
+.disc-solo.cart.art .ds-front::after,.disc-solo.umd.art .ds-front::after{display:none}
 .ds-back-btn{position:absolute;left:50%;bottom:4px;z-index:4;height:40px;padding:0 16px 0 12px;border-radius:999px;display:flex;align-items:center;gap:8px;font-size:13px;font-weight:500;
   color:var(--ink);background:rgba(255,255,255,.07);box-shadow:inset 0 0 0 1px rgba(255,255,255,.14);transform:translate(-50%,8px);opacity:0;pointer-events:none;transition:opacity .3s,transform .4s var(--ease)}
 .ds-back-btn svg{width:18px;height:18px}
@@ -275,6 +282,13 @@ body.themed .glow.on{opacity:.55}
 
 /* ---------- Trophies ---------- */
 .center{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:0 40px;text-align:center}
+/* (beta.12) just unlocked in the game you came back from, above the ring */
+.just{align-self:stretch;margin:0 14px 12px;padding:12px 14px;border-radius:16px;background:rgba(255,217,138,.1);box-shadow:inset 0 0 0 1px rgba(255,217,138,.35);display:grid;gap:8px;max-height:220px;overflow-y:auto}
+.just-h{font-size:14px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#ffd98a}
+.just-a{display:flex;align-items:center;gap:12px;min-width:0}
+.just-a img,.just-nob{width:48px;height:48px;border-radius:10px;flex:none;background:#0b0d14;object-fit:cover}
+.just-a b{display:block;font-size:17px;font-weight:600;line-height:1.25;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.just-a small{display:block;font-size:15px;color:#ffd98a;margin-top:2px}
 .ringbox{position:relative;width:170px;height:170px}
 .ringbox svg{width:100%;height:100%;transform:rotate(-90deg)}
 .ringbox circle{stroke-width:11;fill:none}
@@ -468,6 +482,7 @@ body.focus .focus-close{opacity:1;transform:none;pointer-events:auto}
 body.focus .glow.on{opacity:.55}
 /* the chips under the case: Open case (Close case once open) and, open, the Manual */
 body.focus .v-case .open-bar{opacity:1;transform:translate(-50%,58px);pointer-events:auto}
+body.focus .v-case.solo .open-bar{opacity:0;pointer-events:none} /* (the disc or cartridge on its own: only Put it back) */
 .open-bar #openManual{display:none}
 .open-bar.is-open #openManual:not([hidden]){display:flex}
 .open-bar #openCase{color:var(--ink)}
@@ -517,3 +532,160 @@ body.room .m-room{opacity:1;transform:none;pointer-events:auto;visibility:visibl
 .chip.tog.on i::after{transform:translateX(10px);background:#fff}
 .chip.on{color:var(--ink);background:rgba(255,255,255,.12);box-shadow:inset 0 0 0 1.5px var(--accent)}
 .chip:active{transform:scale(.95)}
+
+/* (beta.12) easier to hit and read with a thumb: the small pill buttons were 32-40 stage px tall (about 5-6 mm on the
+   Thor's bottom screen), under the ~7 mm a finger needs, and the small labels were 10-12 px */
+.open-btn,.open-bar button,.ds-back-btn,.focus-close{height:48px;font-size:15px;padding:0 18px 0 14px}
+.open-btn svg,.open-bar svg,.ds-back-btn svg,.focus-close svg{width:20px;height:20px}
+.focus-close{top:-40px}
+.qk{height:44px;font-size:14px}
+.sc-edit-btn{height:40px;font-size:14px}
+.stat small{font-size:12px}.stat b{font-size:14px}
+.hint{font-size:13px}
+
+/* ================= (beta.12) the calmer bottom screen: Settings' look, fewer outlines, bigger targets =================
+   Soft filled shapes instead of outlined boxes; every button at least 48 stage px (about 7 mm on the Thor's panel); text
+   at 13 px and up. All of it is laid out once; nothing here animates but opacity and transforms. */
+.top .hint{color:var(--dim)}
+.tabs{grid-template-columns:repeat(5,1fr);background:rgba(8,8,18,.55);box-shadow:none} /* (no backdrop blur: it would redraw under every sway of the case) */
+.pill{width:calc((100% - 10px)/5);background:rgba(255,255,255,.1);box-shadow:none}
+.tab{font-size:12.5px}
+
+/* the Game card: a quiet line, the title, a line of play time and one of trophies, Play and the heart, two quiet words */
+.txt{gap:10px}
+.kick{font-size:12px;letter-spacing:.16em;color:var(--accent);opacity:.92}
+.title{font-size:27px;line-height:1.14}
+.title.long{font-size:22px}
+.line{margin:0;font-size:14px;color:var(--dim);line-height:1.4;display:flex;align-items:center;gap:7px}
+.line.ach svg{width:16px;height:16px;flex:none;color:#ffd98a}
+.fav{background:rgba(255,255,255,.07);box-shadow:none}
+.play{box-shadow:0 12px 30px rgba(0,0,0,.35)}
+.quick{margin-top:6px;gap:4px}
+.qk{flex:none;height:48px;padding:0 14px 0 10px;background:none;box-shadow:none;color:var(--dim);font-size:14px;border-radius:14px}
+.qk:active{background:rgba(255,255,255,.06)}
+.nav{width:52px;height:112px;top:142px}
+.nav svg{width:30px;height:30px}
+.nav.prev{left:0}
+.nav.next{left:280px}
+.open-btn{background:rgba(255,255,255,.07);box-shadow:none}
+.just{text-align:left}
+.just-a>div{min-width:0;flex:1}
+
+/* Consoles: two columns of shelves, the one in view lit in its console's colour */
+.sys-list{position:absolute;inset:4px 18px 8px;display:grid;grid-template-columns:1fr 1fr;grid-auto-rows:64px;gap:8px;overflow-y:auto;overscroll-behavior:contain;touch-action:pan-y;scrollbar-width:none;align-content:start}
+.sys-list::-webkit-scrollbar{display:none}
+.sys-it{display:grid;grid-template-columns:auto 1fr;grid-template-rows:auto auto;column-gap:12px;align-content:center;text-align:left;padding:0 16px;border-radius:16px;background:rgba(255,255,255,.055);transition:transform .15s,background-color .2s}
+.sys-it i{grid-row:1/3;align-self:center;width:12px;height:12px;border-radius:50%;background:var(--sg);box-shadow:0 0 12px var(--sg);opacity:.75}
+.sys-it b{font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sys-it small{font-size:13px;color:var(--faint)}
+.sys-it.on{background:rgba(255,255,255,.13);box-shadow:inset 0 0 0 1.5px var(--sg)}
+.sys-it.on i{opacity:1}
+.sys-it:active{transform:scale(.97)}
+.sys-none,.ap-none{grid-column:1/-1;margin:40px 0 0;text-align:center;font-size:14px;color:var(--faint)}
+
+/* Shortcuts: pages of six that slide sideways, the dots under them, the last tile adds one */
+.v-more .grid{display:flex;gap:0;overflow-x:auto;overflow-y:hidden;scroll-snap-type:x mandatory;overscroll-behavior:contain;touch-action:pan-x;scrollbar-width:none;bottom:22px}
+.v-more .grid::-webkit-scrollbar{display:none}
+.sc-page{flex:none;width:100%;height:100%;scroll-snap-align:start;display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:1fr 1fr;gap:10px}
+.tile{background:rgba(255,255,255,.055);box-shadow:none}
+.tile small{font-size:12px}
+.tile .ap-ic{width:38px;height:38px;border-radius:10px}
+.tile.add{background:none;box-shadow:inset 0 0 0 1.5px rgba(185,166,255,.42);color:#cbbdff}
+.tile.add svg{color:#cbbdff}
+.tile.add small{color:rgba(203,189,255,.6)}
+.sc-dots{position:absolute;left:0;right:0;bottom:4px;height:10px;display:flex;justify-content:center;gap:8px}
+.sc-dots i{width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,.22);transition:background-color .2s}
+.sc-dots i.on{background:var(--ink)}
+.sc-edit-btn{background:rgba(255,255,255,.07);box-shadow:none}
+
+/* Apps: Android's own places in a row, then every app */
+.ap-sys{position:absolute;left:18px;right:18px;top:2px;height:48px;display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.ap-s{display:flex;align-items:center;justify-content:center;gap:8px;border-radius:14px;background:rgba(255,255,255,.07);font-size:13.5px;font-weight:500;white-space:nowrap;transition:transform .15s}
+.ap-s svg{width:19px;height:19px;flex:none;color:var(--accent)}
+.ap-s:active{transform:scale(.96)}
+.ap-grid{position:absolute;left:12px;right:12px;top:60px;bottom:4px;display:grid;grid-template-columns:repeat(5,1fr);grid-auto-rows:96px;gap:4px;overflow-y:auto;overscroll-behavior:contain;touch-action:pan-y;scrollbar-width:none;align-content:start}
+.ap-grid::-webkit-scrollbar{display:none}
+.ap{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;border-radius:16px;min-width:0;padding:0 4px;transition:transform .15s,background-color .2s}
+.ap:active{background:rgba(255,255,255,.06);transform:scale(.95)}
+.ap.held{background:rgba(185,166,255,.18)}
+.ap-ic{width:52px;height:52px;border-radius:14px;flex:none;display:grid;place-items:center;font-style:normal;font-size:20px;font-weight:600;color:#fff;background:hsl(var(--h,250) 45% 38%);box-shadow:0 6px 16px rgba(0,0,0,.35)}
+img.ap-ic{background:none;object-fit:contain}
+.ap span{font-size:13px;color:var(--dim);max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* games arriving close together (body.brisk, bottom.js brisk()): the whole-panel cross-fades and the case's fade are quick */
+body.brisk .glow,body.brisk .tbg{transition-duration:.12s}
+body.brisk .wrap,body.brisk .txt,body.brisk .txt.out{transition-duration:.12s}
+/* Screen off (body.asleep): pure black over everything, the rest hidden so nothing is drawn; "Tap to wake" shows for a
+   moment, then fades too */
+#sleep{position:absolute;inset:0;z-index:30;background:#000;display:grid;place-items:center;opacity:0;visibility:hidden;pointer-events:none;transition:opacity .5s ease,visibility 0s .5s}
+#sleep span{font-size:15px;color:rgba(255,255,255,.4);opacity:0}
+body.asleep #sleep{opacity:1;visibility:visible;pointer-events:auto;transition:opacity .6s ease,visibility 0s}
+body.asleep #sleep span{animation:sleepnote 3.2s ease forwards}
+@keyframes sleepnote{0%,10%{opacity:0}25%,70%{opacity:1}100%{opacity:0}}
+body.asleep #views,body.asleep .tabs,body.asleep .top,body.asleep .glow,body.asleep .tbg,body.asleep .ctx{visibility:hidden;transition:visibility 0s .6s}
+/* ---------- the companions (body.ctx-on): over everything while the big screen reads, finds or shows Details ---------- */
+.ctx{position:absolute;inset:0;z-index:7;opacity:0;visibility:hidden;pointer-events:none;transform:translateY(14px);
+  transition:opacity .25s ease,transform .4s var(--ease),visibility 0s .4s}
+body.ctx-on .ctx{opacity:1;visibility:visible;pointer-events:auto;transform:none;transition:opacity .3s ease,transform .45s var(--ease),visibility 0s}
+body.ctx-on #views,body.ctx-on .tabs,body.ctx-on .top{opacity:0;pointer-events:none;visibility:hidden;transition:opacity .2s,visibility 0s .2s}
+/* (the Art Studio always has the screen: its case shows even if a companion's message came last) */
+body.studio .ctx{opacity:0;visibility:hidden;pointer-events:none}
+body.studio.ctx-on #views{opacity:1;visibility:visible;pointer-events:auto}
+.cx-head{position:absolute;left:18px;right:14px;top:12px;height:52px;display:flex;align-items:center;gap:12px}
+.cx-t{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.cx-t small{font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:var(--accent);font-weight:600}
+.cx-t b{font-size:18px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cx-done{flex:none;height:48px;padding:0 18px 0 14px;border-radius:999px;display:flex;align-items:center;gap:8px;font-size:15px;font-weight:500;background:rgba(255,255,255,.09)}
+.cx-done svg{width:20px;height:20px}
+.cx-b{height:64px;border-radius:18px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;font-size:13px;font-weight:500;color:var(--ink);background:rgba(255,255,255,.07);transition:transform .15s,opacity .2s}
+.cx-b svg{width:24px;height:24px}
+.cx-b.off{opacity:.4}
+.cx-b[hidden]{display:none}
+.cx-b:active,.cx-done:active,.rd-big:active,.fd-k:active,.fd-row:active,.dt-shot:active,.dt-play:active{transform:scale(.95)}
+/* reading */
+.rd-turn{position:absolute;left:14px;right:14px;top:84px;height:330px;display:flex;align-items:center;gap:12px}
+.rd-big{flex:none;width:118px;height:100%;border-radius:24px;display:grid;place-items:center;background:rgba(255,255,255,.07)}
+.rd-big svg{width:44px;height:44px;stroke-width:2.2}
+.rd-mid{flex:1;min-width:0;display:flex;flex-direction:column;align-items:stretch;justify-content:center;gap:18px;text-align:center}
+.rd-label{font-size:24px;font-weight:600}
+.rd-scrub{-webkit-appearance:none;appearance:none;width:100%;height:44px;background:none;margin:0;touch-action:none}
+.rd-scrub::-webkit-slider-runnable-track{height:8px;border-radius:99px;background:rgba(255,255,255,.16)}
+.rd-scrub::-webkit-slider-thumb{-webkit-appearance:none;width:34px;height:34px;margin-top:-13px;border-radius:50%;background:#fff;box-shadow:0 4px 14px rgba(0,0,0,.45)}
+.rd-scrub:disabled{opacity:.35}
+.rd-ends{display:flex;justify-content:space-between;font-size:13px;color:var(--faint);margin-top:-10px}
+.rd-tools{position:absolute;left:14px;right:14px;bottom:16px;display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.rd-tools .rd-pg[hidden]{display:none}
+.ctx[data-k="reader"] .rd-tools:has(.rd-pg[hidden]){grid-template-columns:repeat(3,1fr)}
+/* Find: what's typed, the first matches, a keyboard */
+.fd-field{flex:1;min-width:0;height:50px;border-radius:16px;display:flex;align-items:center;gap:10px;padding:0 16px;background:rgba(255,255,255,.08)}
+.fd-ic{width:20px;height:20px;flex:none;color:var(--dim)}
+.fd-q{flex:1;min-width:0;font-size:18px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fd-q.ph{color:var(--faint);font-weight:400}
+.fd-n{flex:none;font-size:13px;color:var(--faint)}
+.fd-res{position:absolute;left:14px;right:14px;top:76px;height:108px;display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:6px}
+.fd-row{border-radius:14px;padding:0 14px;display:flex;flex-direction:column;justify-content:center;align-items:flex-start;text-align:left;background:rgba(255,255,255,.055);min-width:0}
+.fd-row b{font-size:14.5px;font-weight:600;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fd-row small{font-size:12.5px;color:var(--faint);max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fd-row.on{background:rgba(255,255,255,.13);box-shadow:inset 0 0 0 1.5px var(--accent)}
+.fd-none{grid-column:1/-1;align-self:center;text-align:center;margin:0;font-size:14px;color:var(--faint)}
+.fd-kb{position:absolute;left:14px;right:14px;top:194px;bottom:12px;display:flex;flex-direction:column;gap:6px}
+.fd-r{flex:1;display:flex;gap:6px;justify-content:center}
+.fd-k{flex:0 1 calc((100% - 54px)/10);min-width:0;border-radius:12px;display:grid;place-items:center;font-size:19px;font-weight:600;background:rgba(255,255,255,.08);transition:transform .1s,background-color .15s}
+.fd-k:active{background:rgba(255,255,255,.2)}
+.fd-k svg{width:24px;height:24px}
+.fd-w{flex-basis:calc((100% - 54px)/10*1.6);font-size:15px;font-weight:500}
+.fd-sp{flex:1 1 auto;max-width:60%;font-size:15px;font-weight:500}
+/* Details: the pictures, then the main buttons */
+.dt-shots{position:absolute;left:0;right:0;top:80px;height:190px;display:flex;gap:10px;padding:0 18px;overflow-x:auto;overflow-y:hidden;overscroll-behavior:contain;touch-action:pan-x;scrollbar-width:none;align-items:center}
+.dt-shots::-webkit-scrollbar{display:none}
+.dt-shot{flex:none;height:168px;aspect-ratio:16/9;border-radius:14px;overflow:hidden;background:rgba(255,255,255,.06);transition:transform .15s,box-shadow .2s}
+.dt-shot img{width:100%;height:100%;object-fit:cover;display:block}
+.dt-shot.on{box-shadow:0 0 0 3px var(--accent)}
+.dt-none{margin:0 auto;font-size:14px;color:var(--faint)}
+.dt-tip{position:absolute;left:18px;right:18px;top:290px;margin:0;font-size:14px;color:var(--faint);text-align:center}
+.dt-acts{position:absolute;left:18px;right:18px;bottom:18px;display:flex;gap:10px}
+.dt-play{flex:1.6;height:72px;border-radius:20px;display:flex;align-items:center;justify-content:center;gap:10px;font-size:19px;font-weight:600;color:#0b0b14;background:linear-gradient(180deg,#fff,#dfe3ee);box-shadow:0 12px 30px rgba(0,0,0,.35)}
+.dt-play svg{width:24px;height:24px}
+.dt-acts .cx-b{flex:1;height:72px}
+.dt-fav.on svg{color:#ff6f91}
+.dt-fav.on svg path{fill:currentColor}

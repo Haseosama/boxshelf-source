@@ -68,7 +68,9 @@ function cfgGet(text, key) { const m = new RegExp('^\\s*' + key.replace(/[.*+?^$
 
 // ---------- BIOS ----------
 const BIOS_EXT = /\.(bin|rom|zip|img|bios)$/i;
-const hasBiosFiles = d => { try { return fs.readdirSync(d).some(n => BIOS_EXT.test(n)); } catch { return false; } };
+// (beta.12) a folder with anything in it counts as in use: RetroArch's system\ often holds only the cores' own subfolders
+// (PPSSPP\, dolphin-emu\, scummvm\), and moving system_directory away from them left those cores without their files
+const hasBiosFiles = d => { try { return fs.readdirSync(d, { withFileTypes: true }).some(e => e.isDirectory() || BIOS_EXT.test(e.name)); } catch { return false; } };
 function sharedBiosDir() { return path.join(appRoot || path.dirname(dataDir || '.'), 'BIOS'); }
 // the folder each emulator reads its BIOS files from right now
 function biosDirOf(kind, exe) {
@@ -147,8 +149,10 @@ function setCfg(f, want) {
   if (buf && buf.includes(0)) return false;
   if (buf && !Buffer.from(buf.toString('utf8'), 'utf8').equals(buf)) { log('RetroArch config is not UTF-8 text (an ANSI path?), left alone:', f); return false; } // (beta.10: written back, those bytes would have become U+FFFD)
   const src = buf ? buf.toString('utf8') : '', nl = src.includes('\r\n') ? '\r\n' : '\n', lines = src ? src.split(/\r?\n/) : [], seen = new Set(); let changed = false;
-  for (let i = 0; i < lines.length; i++) { const m = /^\s*([A-Za-z0-9_]+)\s*=/.exec(lines[i]); if (!m || want[m[1]] === undefined) continue; seen.add(m[1]); const v = `${m[1]} = "${want[m[1]]}"`; if (lines[i] !== v) { lines[i] = v; changed = true; } }
-  for (const k of Object.keys(want)) if (!seen.has(k)) { if (lines.length && lines[lines.length - 1] === '') lines.pop(); lines.push(`${k} = "${want[k]}"`); changed = true; }
+  for (let i = 0; i < lines.length; i++) { const m = /^\s*([A-Za-z0-9_]+)\s*=/.exec(lines[i]); if (!m || want[m[1]] === undefined) continue; seen.add(m[1]);
+    if (want[m[1]] === null) { lines.splice(i, 1); i--; changed = true; continue; } // (beta.12) null: the key goes (undo of "it wasn't there")
+    const v = `${m[1]} = "${want[m[1]]}"`; if (lines[i] !== v) { lines[i] = v; changed = true; } }
+  for (const k of Object.keys(want)) if (!seen.has(k) && want[k] !== null) { if (lines.length && lines[lines.length - 1] === '') lines.pop(); lines.push(`${k} = "${want[k]}"`); changed = true; }
   if (!changed) return false;
   if (buf) { const bak = f + '.boxshelf-bak'; if (!fs.existsSync(bak)) fs.copyFileSync(f, bak); }
   fs.mkdirSync(path.dirname(f), { recursive: true });
@@ -156,6 +160,7 @@ function setCfg(f, want) {
   return true;
 }
 
+const fileHash = f => { try { return require('crypto').createHash('sha1').update(fs.readFileSync(f)).digest('hex'); } catch { return null; } };
 const manifestFile = () => path.join(dataDir, 'emu-setup.json');
 function manifest() { try { const m = JSON.parse(fs.readFileSync(manifestFile(), 'utf8')); return m && typeof m === 'object' ? m : {}; } catch { return {}; } }
 function saveManifest(m) { try { const f = manifestFile(), tmp = f + '.tmp'; fs.writeFileSync(tmp, JSON.stringify(m, null, 1)); fs.renameSync(tmp, f); } catch (e) { log('Emulator setup: could not save its list', e.message); } }
@@ -171,13 +176,28 @@ function apply(exe, on = {}, opts = {}) {
   if (opts.biosDir !== '' && use.some(c => c.group === 'bios')) { try { fs.mkdirSync(opts.biosDir || sharedBiosDir(), { recursive: true }); } catch {} }
   const byFile = new Map(); for (const c of use) { const k = c.file + '\0' + (c.section || ''); if (!byFile.has(k)) byFile.set(k, { file: c.file, fmt: c.fmt, section: c.section, want: {} }); byFile.get(k).want[c.key] = c.value; }
   const m = manifest(), key = keyOf(kind, exe), rec = m[key] || { kind, exe, files: [], created: [], groups: [] };
+  // (beta.12) each key's value before Boxshelf first changed it (null: it wasn't there), so Undo puts back just those keys
+  // and leaves everything the user (or the emulator) changed since alone
+  // A file setup touches first is also copied as it is now (<file>.boxshelf-setup) and the text setup leaves in it is
+  // fingerprinted (hash): if it's still that text at Undo, the copy goes back exactly (or a file setup started goes)
+  rec.prev = rec.prev || {}; rec.hash = rec.hash || {}; rec.madeBak = rec.madeBak || [];
   const done = [];
   for (const { file, fmt, section, want: w } of byFile.values()) {
-    const existed = isFile(file);
+    const existed = isFile(file), first = !rec.files.includes(file), bakHad = isFile(file + '.boxshelf-bak');
     try {
+      const pk = file + '\0' + (section || ''), cur = fmt === 'cfg' ? null : iniSection(readText(file), section), text = fmt === 'cfg' ? readText(file) : '';
+      const before = {}; for (const k of Object.keys(w)) before[k] = fmt === 'cfg' ? cfgGet(text, k) : cur[k] !== undefined ? cur[k] : null;
+      if (first && existed) { try { fs.copyFileSync(file, file + '.boxshelf-setup'); } catch (e) { log(EMU_NAME[kind], 'setup: no copy of', path.basename(file), e.message); } }
       const changed = fmt === 'cfg' ? setCfg(file, w) : emucfg.setIni(file, section, w, EMU_NAME[kind] + ' setup:');
-      if (changed) { if (!rec.files.includes(file)) rec.files.push(file); if (!existed && !rec.created.includes(file)) rec.created.push(file); done.push(file); }
-    } catch (e) { log(EMU_NAME[kind], 'setup: could not write', file, e.message); return { ok: false, why: `couldn't write ${path.basename(file)} (${e.code || e.message})`, applied: [] }; }
+      if (changed) { if (!rec.files.includes(file)) rec.files.push(file); if (!existed && !rec.created.includes(file)) rec.created.push(file); done.push(file);
+        if (!bakHad && isFile(file + '.boxshelf-bak') && !rec.madeBak.includes(file)) rec.madeBak.push(file);
+        const e = rec.prev[pk] || (rec.prev[pk] = { file, fmt, section: section || null, keys: {} }); for (const k of Object.keys(w)) if (!(k in e.keys)) e.keys[k] = before[k]; }
+      else if (first && existed) { try { fs.unlinkSync(file + '.boxshelf-setup'); } catch {} }
+      if (rec.files.includes(file)) rec.hash[file] = fileHash(file);
+    } catch (e) { log(EMU_NAME[kind], 'setup: could not write', file, e.message);
+      // (beta.12) what was already written in this run is on record, so Undo can still put it back
+      if (done.length) { rec.at = Date.now(); m[key] = rec; saveManifest(m); }
+      return { ok: false, why: `couldn't write ${path.basename(file)} (${e.code || e.message})`, applied: [] }; }
   }
   const groups = [...new Set(use.map(c => c.group))];
   rec.groups = [...new Set([...rec.groups, ...groups])]; rec.at = Date.now(); m[key] = rec; saveManifest(m);
@@ -185,17 +205,38 @@ function apply(exe, on = {}, opts = {}) {
   return { ok: true, kind, applied: groups, skipped: p.skipped.filter(s => want(s.group)), files: done };
 }
 
-// Puts back every file this set up changed (its pre-Boxshelf copy), and removes files it started from nothing.
+// (beta.12) Puts back just the keys this setup changed, as they were before (a key that wasn't there goes again). Never
+// deletes a file or copies an old backup over it: the emulator writes its own settings into these files after setup
+// (RetroArch saves its whole config on exit), and the old way wiped them. A setup recorded by an older version (no
+// per-key record) is only undone for a file that hasn't changed since: otherwise it's left as it is.
 function undo(exe) {
   const kind = kindOf(exe); const m = manifest(), key = kind && keyOf(kind, exe), rec = key && m[key]; if (!rec) return { ok: true, restored: [] };
-  const restored = [];
-  for (const f of rec.files) {
+  const restored = [], kept = [];
+  if (rec.prev && rec.hash) {
+    for (const f of rec.files) {
+      try {
+        const snap = f + '.boxshelf-setup', same = isFile(f) && rec.hash[f] && fileHash(f) === rec.hash[f];
+        if (same && rec.created.includes(f)) { fs.unlinkSync(f); restored.push(f); }
+        else if (same && isFile(snap)) { const tmp = f + '.tmp'; fs.copyFileSync(snap, tmp); fs.renameSync(tmp, f); restored.push(f); }
+        else { // changed since the setup (the emulator saved its settings into it): only setup's own keys go back
+          for (const e of Object.values(rec.prev)) if (e.file === f) { const ch = e.fmt === 'cfg' ? setCfg(f, e.keys) : emucfg.setIni(f, e.section, e.keys, EMU_NAME[kind] + ' setup undo:'); if (ch && !restored.includes(f)) restored.push(f); }
+          if (isFile(f)) kept.push(f); }
+        try { fs.unlinkSync(snap); } catch {}
+        if (same && (rec.madeBak || []).includes(f)) { try { fs.unlinkSync(f + '.boxshelf-bak'); } catch {} }
+      } catch (err) { log('Emulator setup undo:', f, err.message); }
+    }
+    if (kept.length) log('Emulator setup undo: changed since the setup, so only its own settings were put back in:', kept.map(f => path.basename(f)).join(', '));
+    kept.length = 0;
+  } else for (const f of rec.files) {
     try {
+      let mt = 0; try { mt = fs.statSync(f).mtimeMs; } catch {}
+      if (mt && rec.at && mt > rec.at + 5000) { kept.push(f); continue; } // changed since the setup: the user's settings are in it now
       if (rec.created.includes(f)) { if (isFile(f)) fs.unlinkSync(f); restored.push(f); continue; }
       const bak = f + '.boxshelf-bak'; if (!isFile(bak)) continue;
       const tmp = f + '.tmp'; fs.copyFileSync(bak, tmp); fs.renameSync(tmp, f); fs.unlinkSync(bak); restored.push(f);
     } catch (e) { log('Emulator setup undo:', f, e.message); }
   }
+  if (kept.length) log('Emulator setup undo: left alone (changed since the setup):', kept.map(f => path.basename(f)).join(', '));
   delete m[key]; saveManifest(m); log(EMU_NAME[kind], 'setup undone:', restored.length, 'file(s) put back');
   return { ok: true, restored };
 }

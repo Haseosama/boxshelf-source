@@ -60,13 +60,16 @@ module.exports = async function screensPass({ browser, base, check, OUT }) {
     await ctx.close();
   }
 
-  // (beta.11) Text size (android-early.js): the page's layout width. The Thor keeps 1440 on Automatic; a small screen or a
-  // bigger Android font size gets a narrower page (so everything is drawn bigger); the choice in Settings wins over both
+  // (beta.11) Text size (android-early.js): the page's layout width. (beta.12) Automatic gives a handheld 1280 (the Thor's
+  // labels were too small at 1440); a small screen or a bigger Android font size gets a narrower page (so everything is
+  // drawn bigger, down to 1024); a tablet-sized screen keeps 1440; the choice in Settings wins over all of them
   const TS = [
-    { name: 'Thor, Automatic', w: 853, h: 480, dpr: 2.25, want: 1440 },
-    { name: 'small 4-inch screen, Automatic', w: 640, h: 360, dpr: 3, want: 1152 },
-    { name: 'Thor, Android font size 1.3, Automatic', w: 853, h: 480, dpr: 2.25, fs: '1.3', want: 1152 },
+    { name: 'Thor, Automatic', w: 853, h: 480, dpr: 2.25, want: 1280 },
+    { name: 'small 4-inch screen, Automatic', w: 640, h: 360, dpr: 3, want: 1024 },
+    { name: 'Thor, Android font size 1.3, Automatic', w: 853, h: 480, dpr: 2.25, fs: '1.3', want: 1024 },
+    { name: '10-inch tablet, Automatic', w: 1280, h: 800, dpr: 2, want: 1440 },
     { name: 'Thor, Large', w: 853, h: 480, dpr: 2.25, pref: 'large', want: 1280 },
+    { name: 'Thor, Largest', w: 853, h: 480, dpr: 2.25, pref: 'largest', want: 1024 },
     { name: 'small 4-inch screen, Normal', w: 640, h: 360, dpr: 3, pref: 'normal', want: 1440 },
   ];
   for (const t of TS) {

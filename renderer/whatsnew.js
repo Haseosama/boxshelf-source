@@ -6,6 +6,48 @@
 //   sections: [{ h, items: [[headline, more]] }] }; newest first.
 window.BS_WHATSNEW = [
   {
+    version: '1.82.0-beta.12', android: '1.82.0-beta.12', date: '2026-11-10', title: 'Find any game, manuals you can read, and a new Thor bottom screen',
+    highlights: [
+      "Find a game: search every shelf by name, by keyboard, controller or touch",
+      "Manuals and guides you can read on any screen: zoom, move around the page, one page at a time",
+      "A new Details page built around the case, with the trailer's sound and full-screen screenshots",
+      "The shelf always slides with every effect on, and achievements as a wall of badges",
+      "Every art source one tap away in the Art Studio; Thor: a new bottom screen with Apps, Consoles and Screen off"
+    ],
+    platforms: [
+      "Windows: everything above but the Thor and Steam Deck parts, plus Seamless play for Steam and store games.",
+      "Android (AYN Thor, phones and tablets): the new bottom screen, RomM, touch gestures, smoother scrolling, readable manuals, phones and tablets upright.",
+      "Linux / Steam Deck (experimental): Flatpak emulators, Steam games watched, a controller file browser, clear ways back from a game."
+    ],
+    sections: [
+      { h: "New", items: [
+        ["Find a game", "Search every shelf by title: the Search button beside Menu, / or Ctrl+F, hold the left stick's click, or the quick menu's first row. Results show as you type, best match first; pick one and the shelf goes to it, on whichever console it's on."],
+        ["Manuals you can read", "Zoom in and move around a page with the controller (L2 / R2, right stick), the keyboard (+ / -, arrows), the mouse (Ctrl + wheel) or your fingers (pinch, double tap, drag). Small screens show one page at a time; on the Thor a manual opens at the page's width, its print near real size. Each manual opens where you left it."],
+        ["Details, redesigned", "Built around the case: Play first, the trailer beside it with its sound and volume, screenshots that open full screen, and LB / RB to jump between sections. (Windows and Linux; the Thor keeps its own.)"],
+        ["Achievements as a badge wall", "A game's achievements as a wall of badges with rare and ultra-rare rims, sorted your way, with a card for the one you're on."],
+        ["Seamless play (Windows)", "Steam and store games are watched while they run, so Boxshelf is back the moment you quit; pick the screen mode, or Go to desktop from the Home menu."],
+        ["RomM and RocketLauncher", "Play games from your RomM server (Windows, Linux and Android). On Windows, games can start through RocketLauncher, HyperSpin's launcher, with its fade screens, bezels and pause menu."],
+        ["Every art source at a tap", "The Art Studio ends each row with a card for each source not set up yet, saying what it brings: LaunchBox art (one download, right there), ScreenScraper (every part), SteamGridDB (fronts in HD) and IGDB. Connect one and its versions fill the row."],
+        ["Thor: a new bottom screen", "Apps first (every app on the device, Wi-Fi and Bluetooth), then a calmer card for the game, Trophies, Consoles and Shortcuts (up to twelve). While you read a manual, search or look at Details, the bottom screen gives you big buttons for it, and Find a game types on it. It stays up while you play a game that doesn't use it (DS and 3DS games still get it). Screen off makes it go dark until you tap it."],
+        ["Thor, phones and Steam Deck: touch", "Double-tap a case to pick it up, swipe up for Details and down to close them, tap the manual in an open case to read it."],
+        ["Steam Deck", "Emulators installed as Flatpaks are found, Steam games are watched, a controller-friendly file browser in Game Mode, updates that keep your Steam shortcut working, and Boxshelf's own artwork in your Steam library."]
+      ] },
+      { h: "Better", items: [
+        ["Every effect stays on", "The shelf slides and keeps its effects whatever Windows' animation setting says (Reduce motion is now in Settings → Performance, Off by default), and the automatic performance level no longer turns effects off."],
+        ["Smoother on the Thor", "Fast scrolling no longer competes with the bottom screen or the moving backdrop, and the smoothness test (Settings → System) shows its results on screen."],
+        ["The right word for every console", "Cartridge, UMD or floppy disk wherever the case holds one, in Details, the museum and the Art Studio."],
+        ["A faster Art Studio", "Versions show at once instead of waiting for the slowest source, and the Spine page is readable."],
+        ["Controllers", "Switching a controller on with its Guide button no longer opens the Home menu, and its first presses are never lost. Minus / View opens Details (held: the museum)."],
+        ["Mona Sans", "Boxshelf's interface has a new, clearer font."]
+      ] },
+      { h: "Fixed", items: [
+        ["DS and other cartridge games in the Art Studio", "The Thor's Art Studio and bottom screen show the cartridge's own picture, whole, and call it a cartridge."],
+        ["Quick menu", "It no longer opens or slides away by itself."],
+        ["Custom covers", "A cover you chose stays chosen."]
+      ] }
+    ]
+  },
+  {
     version: '1.82.0-beta.9', android: '1.82.0-beta.9', date: '2026-11-06', title: 'Smoother, better manuals, and covers for every custom game',
     highlights: [
       'Smoother: background work no longer makes the shelf hitch, and the Art Studio opens faster',

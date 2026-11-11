@@ -1,10 +1,13 @@
 package io.github.boxshelf;
 
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.SystemClock;
 import android.view.Display;
 import android.view.InputDevice;
 import android.view.KeyEvent;
+import android.view.MotionEvent;
 import android.view.WindowManager;
 import android.webkit.WebView;
 
@@ -17,20 +20,45 @@ import com.getcapacitor.BridgeActivity;
 
 /**
  * Boxshelf on Android (AYN Thor). The shared UI runs in Capacitor's WebView; this activity only makes it feel like a
- * console front end: full screen with the system bars hidden, screen kept on, and controller buttons left to the
- * page's Gamepad API instead of Android turning B into "Back" and closing the app.
+ * console front end: full screen with the system bars hidden, the screen kept on while it's being used, and controller
+ * buttons left to the page's Gamepad API instead of Android turning B into "Back" and closing the app.
  */
 public class MainActivity extends BridgeActivity {
     private long lastPadButton = 0;
+
+    // ---------- keeping the screen on (beta.12) ----------
+    // The screen stays on while Boxshelf is in front and was used in the last few minutes (the page's "Dim the screen
+    // after" setting, else IDLE_DEFAULT), or while a RomM download runs (holdAwake). After that the flag is cleared and
+    // Android's own screen timeout takes over, so a phone left on the shelf (or in attract mode) sleeps like any app.
+    // It's never held while Boxshelf is paused: a game in front owns the screen then.
+    private static final long IDLE_DEFAULT = 10 * 60_000L;
+    // a pause longer than this (a game, the screen off) also pauses the page's WebView and its timers until Boxshelf is
+    // back; short ones (a permission prompt, the folder picker) leave it running, and the launch's own short timers finish
+    private static final long WEB_PAUSE_AFTER = 2500L;
+    private final Handler ui = new Handler(Looper.getMainLooper());
+    private long lastInput = SystemClock.uptimeMillis();
+    private long idleMs = IDLE_DEFAULT;
+    private int holds = 0;
+    private boolean keptOn = false;
+    private boolean paused = false;
+    private boolean checkPending = false;
+    private boolean webPaused = false;
+    private final Runnable awakeCheck = () -> { checkPending = false; applyAwake(); };
+    private final Runnable webPause = this::pauseWeb;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(BoxshelfNativePlugin.class); // folders, emulator detection, launching (must come before super.onCreate)
         super.onCreate(savedInstanceState);
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        // (beta.12) phones and tablets turn with the screen (the manifest says fullUser); the Thor's two screens are laid
+        // out side by side for landscape, so it stays landscape whatever its auto-rotate setting says
+        if (android.os.Build.MODEL != null && android.os.Build.MODEL.toLowerCase(java.util.Locale.ROOT).contains("thor")) {
+            setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
+        }
         WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
         hideSystemBars();
         pinRefreshRate();
+        applyAwake();
 
         WebView wv = getBridge() != null ? getBridge().getWebView() : null;
         if (wv != null) {
@@ -50,6 +78,83 @@ public class MainActivity extends BridgeActivity {
                 sendKey("Escape", 27);
             }
         });
+    }
+
+    @Override
+    public void onResume() {
+        paused = false;
+        lastInput = SystemClock.uptimeMillis(); // coming back counts as being used
+        ui.removeCallbacks(webPause);
+        resumeWeb(); // before the plugins hear "resume", so the page's timers run when it answers
+        super.onResume();
+        applyAwake();
+    }
+
+    @Override
+    public void onPause() {
+        super.onPause();
+        paused = true;
+        applyAwake(); // the flag goes at once: whatever is in front now owns the screen
+        ui.removeCallbacks(webPause);
+        ui.postDelayed(webPause, WEB_PAUSE_AFTER);
+    }
+
+    @Override
+    public void onDestroy() {
+        ui.removeCallbacksAndMessages(null);
+        // a screen closing while its timers are paused starts them again on its way out: they belong to the whole app
+        if (webPaused) { WebView wv = getBridge() != null ? getBridge().getWebView() : null; if (wv != null) { try { wv.resumeTimers(); } catch (RuntimeException ignored) {} } webPaused = false; }
+        super.onDestroy();
+    }
+
+    // the page's WebView stops drawing and its JavaScript timers stop (Android pauses the timers of every WebView in the
+    // app: the bottom screen's too, which is hidden by then). Capacitor itself never does this (its KeepRunning is on)
+    private void pauseWeb() {
+        if (!paused || webPaused) return;
+        WebView wv = getBridge() != null ? getBridge().getWebView() : null;
+        if (wv == null) return;
+        try { wv.onPause(); wv.pauseTimers(); webPaused = true; } catch (RuntimeException ignored) {}
+    }
+
+    // (beta.12) the timers are restarted every time Boxshelf comes to the front, paused here or not: pauseTimers() stops the
+    // timers of every WebView in the app, and a Boxshelf screen made again (Android switching the Home app can close the
+    // old one and start a new one) would otherwise never start them, and look frozen
+    private void resumeWeb() {
+        WebView wv = getBridge() != null ? getBridge().getWebView() : null;
+        if (wv == null) { webPaused = false; return; }
+        try { if (webPaused) wv.onResume(); wv.resumeTimers(); } catch (RuntimeException ignored) {}
+        webPaused = false;
+    }
+
+    /** Someone used Boxshelf (a key, a stick, a touch on either screen). Main thread only. */
+    void noteInput() {
+        lastInput = SystemClock.uptimeMillis();
+        if (!keptOn && !paused) applyAwake();
+    }
+
+    /** The page's "Dim the screen after" (minutes; 0 or less = the default). Any thread. */
+    void setIdleMinutes(int minutes) {
+        final long ms = minutes > 0 ? Math.min(minutes, 240) * 60_000L : IDLE_DEFAULT;
+        ui.post(() -> { idleMs = ms; ui.removeCallbacks(awakeCheck); checkPending = false; applyAwake(); });
+    }
+
+    /** Something long is running that the player is waiting on (a RomM download): the screen stays on. Any thread. */
+    void holdAwake(boolean on) {
+        ui.post(() -> { holds = Math.max(0, holds + (on ? 1 : -1)); if (!on) lastInput = SystemClock.uptimeMillis(); applyAwake(); });
+    }
+
+    // sets or clears FLAG_KEEP_SCREEN_ON, and checks again when the idle time is up (one timer, never a loop)
+    private void applyAwake() {
+        long now = SystemClock.uptimeMillis(), left = idleMs - (now - lastInput);
+        boolean on = !paused && (holds > 0 || left > 0);
+        if (on != keptOn) {
+            keptOn = on;
+            try {
+                if (on) getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            } catch (RuntimeException ignored) {}
+        }
+        if (on && holds == 0 && !checkPending) { checkPending = true; ui.postDelayed(awakeCheck, Math.max(1000L, left)); }
     }
 
     /**
@@ -83,6 +188,7 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     public boolean dispatchKeyEvent(KeyEvent e) {
+        noteInput();
         int src = e.getSource();
         boolean pad = (src & InputDevice.SOURCE_GAMEPAD) == InputDevice.SOURCE_GAMEPAD
                 || (src & InputDevice.SOURCE_JOYSTICK) == InputDevice.SOURCE_JOYSTICK;
@@ -92,6 +198,18 @@ public class MainActivity extends BridgeActivity {
             return true;               // but Android doesn't turn an unused B into Back and close the app
         }
         return super.dispatchKeyEvent(e);
+    }
+
+    @Override
+    public boolean dispatchTouchEvent(MotionEvent e) {
+        noteInput();
+        return super.dispatchTouchEvent(e);
+    }
+
+    @Override
+    public boolean dispatchGenericMotionEvent(MotionEvent e) {
+        noteInput(); // sticks and triggers (the page reads them through the Gamepad API)
+        return super.dispatchGenericMotionEvent(e);
     }
 
     private void hideSystemBars() {

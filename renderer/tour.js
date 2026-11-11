@@ -46,6 +46,7 @@
     const t = T(); if (!t) return;
     if (settingsOn()) { try { await Settings.close(); } catch {} await until(() => !settingsOn(), 1500); await wait(250); }
     if (t.qmOn()) { t.qmClose(); await wait(250); }
+    if (window.BS_FIND && BS_FIND.isOpen()) { BS_FIND.close(); await until(() => t.mode() === 'browse', 1000); await wait(200); } // (beta.12) Find a game
     if (t.mode() === 'inspect') { t.closeInspect(); await until(() => t.mode() === 'browse', 1500); await wait(200); }
     if (t.mode() === 'details') { t.closeDetails(); await until(() => t.mode() === 'browse', 1500); await wait(250); }
   }
@@ -58,11 +59,18 @@
       keys: [[{ pad: ['L2', 'R2'], kbd: ['↑', '↓'] }, 'Next or previous console'], [{ pad: ['L1', 'R1'], kbd: ['Z', 'C'] }, 'Jump by letter']] },
     { k: 'Your games', t: 'Pick a game', p: 'Move along the shelf with the stick, the d-pad or the arrow keys.', enter: toShelf, target: centreCase,
       keys: [[{ pad: ['x'], kbd: ['Enter'] }, 'Play'], [{ pad: ['tri'], kbd: ['F'] }, 'Flip to the back'], [{ pad: ['tri'], kbd: ['H'] }, { pad: 'Hold to favourite', kbd: 'Favourite' }]] },
+    // (beta.12) the search (find.js): opened for this step, closed again as the tour moves on or ends (toShelf)
+    { k: 'Find a game', t: 'Search every shelf', p: 'Type a few letters of a title and pick the game from the list. The shelf goes straight to it, whichever console it’s on. The magnifying glass beside Menu opens it too.',
+      enter: async () => { await toShelf(); if (window.BS_FIND) { BS_FIND.open(); await until(() => BS_FIND.isOpen(), 1500); await wait(250); } },
+      target: () => { const e = document.querySelector('#bsFind.on .fg-side'); return e && shown(e) ? box(e) : null; },
+      keys: [[{ pad: ['L3'], kbd: ['/'], padText: 'Hold' }, 'Find a game']] },
     { k: 'Details', t: 'Everything about a game', p: 'The trailer plays at the top. Below it: info, screenshots, the manual and achievements. Box art and Rename are under More.',
       enter: async () => { await toShelf(); T().openDetails(); await until(() => T().mode() === 'details', 1500); }, target: () => shown($('details')) ? box($('details')) : null,
-      keys: [[{ pad: ['sq'], kbd: ['I'] }, 'Open Details'], [{ pad: ['tri'] }, 'Trailer full screen'], [{ pad: ['L1', 'R1'], kbd: ['Q', 'E'] }, 'Switch tabs']] },
+      keys: [[{ pad: ['⧉'], kbd: ['I'] }, 'Open Details'], [{ pad: ['tri'] }, 'Trailer full screen'], [{ pad: ['L1', 'R1'], kbd: ['Q', 'E'] }, 'Switch tabs']] },
     // (spin: the case turns a side every 2.2 s while this step is up, to show what Inspect does)
+    // (only a console game has a case to hold: on a Steam or custom game the step is left out, as the Art Studio's is)
     { k: 'Inspect', t: 'Hold the case', p: 'Turn it round, zoom in, and open it to see the disc and the manual.', spin: true,
+      skip: () => { const t = T(), g = t && t.game(); return !(g && g.kind === 'rom'); },
       enter: async () => { await toShelf(); T().openInspect(); await until(() => T().mode() === 'inspect', 1500); await wait(900); }, target: inspectCase,
       keys: [[{ pad: ['R3'], kbd: ['V'] }, 'Inspect'], [{ pad: ['x'], kbd: ['Enter'] }, 'Open the case']] },
     { k: 'Quick menu', t: 'Art, looks and trophies', p: 'Box art opens this game in the Art Studio. Customize changes the theme and sounds. Trophies connects RetroAchievements.',
@@ -74,7 +82,11 @@
       keys: [[{ pad: ['←', '→'], kbd: ['←', '→'] }, 'Front, back, spine, disc'], [{ pad: ['x'], kbd: ['Enter'] }, 'Use this version'], [{ pad: ['o'], kbd: ['Esc'] }, 'Back to the shelf']] },
     { k: 'Adding games', t: 'Add more games', p: 'Consoles: point Boxshelf at a games folder. PC games and Custom games: add anything else, one at a time or a whole folder.',
       enter: async () => { await toShelf(); if (window.Setup && Setup.open) Setup.open({ page: 'games' }); await until(() => settingsOn() && !!addRows(), 3000); }, target: addRows,
-      keys: [[{ pad: ['⧉'], kbd: ['S'] }, 'Settings']] },
+      keys: [[{ pad: ['☰'], kbd: ['S'] }, { pad: 'Menu, then Settings', kbd: 'Settings' }]] },
+    // (beta.12, Linux / Steam Deck only) there's no Home menu during a game there: how to get back, and Steam's layout
+    { k: 'Leaving a game', t: 'Back to the shelf', p: 'Hold View and Menu together for a second and a half: the game closes and the shelf comes back. (In Steam’s Game Mode, the Steam button’s Exit game closes Boxshelf too.) If the controller acts oddly, set Boxshelf’s controller layout in Steam to Gamepad with mouse trackpad.',
+      skip: () => !(window.bsPlatform && bsPlatform.os === 'linux'), enter: toShelf,
+      keys: [[{ pad: ['⧉', '☰'], kbd: null, kbdText: 'In the game: its own quit key', padText: 'Hold' }, 'Close the game']] },
     { k: 'Done', t: 'That’s the basics', p: 'The museum has a short tour of its own the first time you go in. Watch this one again from Settings · Shelf · Show the tour.', enter: toShelf, last: true,
       keys: [[{ pad: ['⧉'], kbd: ['M'], padText: 'Hold' }, 'Museum']] },
   ];
@@ -151,7 +163,8 @@
     const L = list(); i = Math.max(0, Math.min(L.length - 1, n)); const s = L[i], my = ++gen;
     // the spotlight closes at once (it used to stay on the last part while the next screen opened, then slide across late)
     busy = true; el.classList.add('moving'); el.querySelector('.bt-spot').classList.add('none'); spinStop();
-    try { await s.enter(); } catch (e) { console.error('tour step', s.k, e); }
+    const run = entering = Promise.resolve().then(() => s.enter()).catch(e => console.error('tour step', s.k, e));
+    await run; if (entering === run) entering = null;
     if (my !== gen || !on) return;
     await settle(s, 1500); if (my !== gen || !on) return;
     paint(s, i, L.length); place(s); el.classList.remove('moving'); busy = false;
@@ -159,7 +172,7 @@
     // (moved since, e.g. a late layout: placed again only if it really did, never a second jump for nothing)
     await wait(450); if (my !== gen || !on) return; await settle(s, 600); if (my === gen && on) place(s);
   }
-  let spinT = 0;
+  let spinT = 0, entering = null;
   function spinStart(my) { spinStop(); spinT = setInterval(() => { const t = T(); if (my !== gen || !on || !t || t.mode() !== 'inspect') { spinStop(); return; } t.inspectTurn(); }, 2200); }
   function spinStop() { if (spinT) { clearInterval(spinT); spinT = 0; } }
   function go(d) { if (!on || busy) return; const L = list(); if (d > 0 && i >= L.length - 1) { end(); return; } if (i + d < 0) return; show(i + d); }
@@ -169,6 +182,9 @@
     el.classList.remove('on'); el.setAttribute('aria-hidden', 'true');
     // closed first: Settings saves its own copy of the settings as it closes, which would undo tourDone saved before it
     await toShelf();
+    // ended while a step was still opening its screen (Settings takes a moment to come up): once it's up, it goes too
+    const late = entering; entering = null;
+    if (late) { await late; if (settingsOn()) { try { await Settings.close(); } catch {} await until(() => !settingsOn(), 1500); } }
     const t = T(); if (t) { t.uiSet('tourDone', true); t.poke(); } // (the idle wait for attract mode starts again from now)
     try { localStorage.removeItem('bs-tour-pending'); } catch {}
     setTimeout(() => { if (!on && el) { el.querySelector('.bt-spot').classList.add('none'); } }, 300);

@@ -35,7 +35,9 @@ let pausedUntil = 0, pauseWhy = '', badSig = '', maxThreads = 1, spacing = 0, la
 function init(o = {}) { creds = o.creds || creds; log = o.log || log; cacheFile = o.dataDir ? path.join(o.dataDir, 'ss-cache.json') : null; cache = null; fetchFn = o.fetch || null; matchFn = o.match || null; discIdFn = o.discId || null; pausedUntil = 0; pauseWhy = ''; badSig = ''; maxThreads = 1; spacing = 0; }
 // (beta.7) Boxshelf's own developer login, when this build has one: main/ss-dev.json { "devId", "devPass" }, put there for the
 // app builds only. It's never in git (the .gitignore lists it) and so never in the public source. One the player enters wins.
-const OWN_DEV = (() => { try { const j = require('./ss-dev.json'); return j && j.devId && j.devPass ? { devId: String(j.devId), devPass: String(j.devPass) } : null; } catch { return null; } })();
+// (beta.12: the file's placeholders, "YOUR-…", count as no login: a file not filled in yet must not look like a wrong one)
+// (read as text, tabs and line breaks typed into a value taken out first: they made the file unreadable JSON)
+const OWN_DEV = (() => { try { const j = JSON.parse(fs.readFileSync(path.join(__dirname, 'ss-dev.json'), 'utf8').replace(/^﻿/, '').replace(/[\u0000-\u001f]+/g, ' ')); const t = v => String(v || '').trim(), ok = v => t(v) && !/^YOUR-/i.test(t(v)); return j && ok(j.devId) && ok(j.devPass) ? { devId: t(j.devId), devPass: t(j.devPass) } : null; /* (trimmed: a space or tab typed into the file is never part of the login) */ } catch { return null; } })();
 const hasDevLogin = () => { const c = C(); return !!(c.devId && c.devPass); };
 const C = () => { const c = creds() || {}, own = !String(c.devId || '').trim() && OWN_DEV;
   return { user: String(c.user || '').trim(), pass: String(c.pass || ''), devId: own ? OWN_DEV.devId : String(c.devId || '').trim(), devPass: own ? OWN_DEV.devPass : String(c.devPass || '') }; };
@@ -186,6 +188,11 @@ async function candidates(sysId, game, part, opts = {}) {
       const what = m.type === 'box-2D' ? 'Box front' : m.type === 'box-2D-back' ? 'Box back' : m.type === 'box-2D-side' ? 'Spine' : m.type === 'box-texture' ? 'Cut from full wrap' : CART.has(sysId) ? 'Cartridge' : 'Disc';
       const c = { url: m.url, ext: m.ext, source: 'screenscraper', type: m.type, region, edition: 'original', kind: 'scan', label: [what, rw].filter(Boolean).join(' · ') };
       if (m.type === 'box-texture') { if (!opts.canCut) continue; c.cut = 'spine'; c.src = m.ext; c.ext = '.jpg'; }
+      // (beta.12) the picker shows ScreenScraper's own small copy (its media address takes maxwidth / maxheight): full scans,
+      // one at a time on a free account, made the page fill in slowly. The full scan is fetched only for the one used.
+      // (A full wrap stays whole: its spine is cut from the real picture.)
+      // A spine is narrow, so its copy may be tall (still a small file): the Spine page shows it lying flat across the page.
+      else { try { const u = new URL(m.url); u.searchParams.set('maxwidth', '420'); u.searchParams.set('maxheight', m.type === 'box-2D-side' ? '1400' : '420'); c.thumbUrl = u.toString(); } catch {} }
       out.push(c);
     }
     return out;

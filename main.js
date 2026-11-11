@@ -38,6 +38,10 @@ const wiiumanual = require('./main/wiiumanual');
 const manualcoll = require('./main/manualcoll');
 const manualstudio = require('./main/manualstudio'); // Manual Studio: every manual for a game side by side, per-game locks, per-console language / region
 const launcher = require('./main/launcher');
+const rocket = require('./main/rocket'); // (beta.12) RocketLauncher, Windows
+const romm = require('./main/romm'); // (beta.12) RomM, a self-hosted game library
+const gamewatch = require('./main/gamewatch'); // (beta.12) Seamless play: Steam and store games watched
+const seamless = require('./main/seamless'); // (beta.12) Seamless play: screen mode, Go to desktop, the launch timeline
 const themes = require('./main/themes');
 const customThemes = require('./main/customthemes'); // (1.76) picture themes the user makes: Custom themes\<name>\
 const library = require('./main/library');
@@ -75,16 +79,27 @@ let history = null, histFile = null, histOpen = null;
 function loadHistory() {
   if (history) return history; histFile = path.join(app.getPath('userData'), 'history.json'); history = Object.create(null);
   let raw = null; try { raw = fs.readFileSync(histFile, 'utf8'); } catch {}
-  if (raw != null) { try { const o = JSON.parse(raw); if (o && typeof o === 'object') for (const [k, v] of Object.entries(o)) if (v && typeof v === 'object') history[k] = { count: +v.count || 0, ms: +v.ms || 0, last: +v.last || 0 }; }
+  if (raw != null) { try { const o = JSON.parse(raw); if (o && typeof o === 'object') for (const [k, v] of Object.entries(o)) if (v && typeof v === 'object') history[k] = histEntry(v); }
     catch (e) { try { fs.copyFileSync(histFile, histFile + '.corrupt-' + Date.now()); } catch {} log('history unreadable, kept a copy', e.message); } }
   return history;
 }
 // temp + rename: a crash or power cut mid-write can't wipe the play history
 function saveHistory() { try { fs.writeFileSync(histFile + '.tmp', JSON.stringify(history)); fs.renameSync(histFile + '.tmp', histFile); } catch (e) { log('history save', e.message); } }
-function historyStart(id) { id = String(id).slice(0, 1024); const h = loadHistory(); const e = h[id] = h[id] || { count: 0, ms: 0, last: 0 }; const prev = { count: e.count, last: e.last }; e.count++; e.last = Date.now(); histOpen = { id, at: Date.now(), prev }; saveHistory(); }
+// (beta.12) each game also keeps when it was first played (first, ms), its longest session (long, ms) and its last
+// sessions (s: [start in seconds, length in seconds], newest last, at most HIST_SESSIONS), so Details' "Your play" can
+// show first played, longest, this month and hours by week. Older files have none of these: they start from now.
+const HIST_SESSIONS = 120;
+function histEntry(v) {
+  const e = { count: +v.count || 0, ms: +v.ms || 0, last: +v.last || 0 };
+  if (+v.first > 0) e.first = +v.first; if (+v.long > 0) e.long = +v.long;
+  if (Array.isArray(v.s)) { const s = v.s.filter(x => Array.isArray(x) && x[0] > 0 && x[1] >= 0).slice(-HIST_SESSIONS).map(x => [Math.round(+x[0]), Math.round(+x[1])]); if (s.length) e.s = s; }
+  return e;
+}
+function historyStart(id) { id = String(id).slice(0, 1024); const h = loadHistory(); const e = h[id] = h[id] || { count: 0, ms: 0, last: 0 }; const prev = { count: e.count, last: e.last, first: e.first }; e.count++; e.last = Date.now(); if (!e.first) e.first = e.last; histOpen = { id, at: Date.now(), prev }; saveHistory(); }
 // the launch never started (the exe couldn't be run): take the play back off, "last played" included
-function historyUndo() { if (!histOpen) return; const { id, prev } = histOpen, h = loadHistory(), e = h[id]; histOpen = null; if (!e || !prev) return; if (!prev.count && !e.ms) delete h[id]; else { e.count = prev.count; e.last = prev.last; } saveHistory(); }
-function historyEnd() { if (!histOpen) return; const h = loadHistory(), e = h[histOpen.id]; if (e) { e.ms += Date.now() - histOpen.at; saveHistory(); } histOpen = null; }
+function historyUndo() { if (!histOpen) return; const { id, prev } = histOpen, h = loadHistory(), e = h[id]; histOpen = null; if (!e || !prev) return; if (!prev.count && !e.ms) delete h[id]; else { e.count = prev.count; e.last = prev.last; if (prev.first) e.first = prev.first; else delete e.first; } saveHistory(); }
+function historyEnd() { if (!histOpen) return; const h = loadHistory(), e = h[histOpen.id]; if (e) { const len = Math.max(0, Date.now() - histOpen.at); e.ms += len; if (len > (e.long || 0)) e.long = len;
+  const s = Array.isArray(e.s) ? e.s : (e.s = []); s.push([Math.round(histOpen.at / 1000), Math.round(len / 1000)]); if (s.length > HIST_SESSIONS) s.splice(0, s.length - HIST_SESSIONS); saveHistory(); } histOpen = null; }
 
 // ---------- trailer window (YouTube embed from the LaunchBox link); Esc or the close button ends it ----------
 let trailerWin = null, coverWindowed = false;
@@ -214,6 +229,9 @@ app.on('second-instance', () => { if (alive() && launcher.isRunning()) { padwatc
 app.commandLine.appendSwitch('disk-cache-size', String(64 * 1024 * 1024));
 app.commandLine.appendSwitch('ignore-gpu-blocklist');
 app.commandLine.appendSwitch('enable-gpu-rasterization');
+// (beta.12) a laptop with two graphics chips (Intel + NVIDIA / AMD): Chromium drew on the Intel one, so Automatic picked Low
+// and the shelf lost its effects. Boxshelf is a TV front end; it asks for the strong one, as games do
+if (process.platform === 'win32') app.commandLine.appendSwitch('force_high_performance_gpu');
 // Windows: Chromium stops drawing a window it believes is covered ("native window occlusion"). Boxshelf sits invisible
 // under the fullscreen game while one runs, and after quick open/close runs Chromium sometimes missed it being uncovered
 // again: the screen stayed black until a key was pressed. The shelf pauses its own loops while a game runs (run:aside:
@@ -239,7 +257,7 @@ function computeRoots() {
   return roots.filter(Boolean).map(r => { r = path.resolve(r).toLowerCase(); return r.endsWith(path.sep) ? r : r + path.sep; });
 }
 
-const MIME = { pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', svg: 'image/svg+xml', gif: 'image/gif', mp4: 'video/mp4', webm: 'video/webm', mov: 'video/quicktime', glb: 'model/gltf-binary', gltf: 'model/gltf+json', bin: 'application/octet-stream', json: 'application/json' };
+const MIME = { pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', svg: 'image/svg+xml', gif: 'image/gif', mp4: 'video/mp4', m4v: 'video/mp4', m4a: 'audio/mp4', webm: 'video/webm', mov: 'video/quicktime', glb: 'model/gltf-binary', gltf: 'model/gltf+json', bin: 'application/octet-stream', json: 'application/json' };
 
 // Covers are asked for at the size they're shown (bsfile://…?t=<height>): big scans (Steam's are 1200×1800) are
 // scaled once, kept in data\thumbs and served from there, so the shelf never decodes or holds full-size images.
@@ -305,14 +323,14 @@ function fileUrl(p) { if (!p) return null; const v = artVer.get(path.resolve(p).
 function gameFile(systemId, file) {
   const sc = cfg.systems[systemId]; if (!sc) throw new Error('Unknown system.');
   const f = path.resolve(String(file || '')).toLowerCase();
-  if (!(sc.romDirs || []).some(d => paths.inDir(f, d))) throw new Error('That game is not in a games folder.');
+  if (!(sc.romDirs || []).some(d => paths.inDir(f, d)) && !paths.inDir(f, rommDir(systemId))) throw new Error('That game is not in a games folder.'); // (beta.12: or RomM's download folder for a console with none)
   return { sc, file: String(file) };
 }
 
 function createWindow() {
   win = new BrowserWindow({
-    width: 1600, height: 900, ...startBounds(), // Settings → Display: opens on the TV chosen there (the main display when it isn't connected)
-    fullscreen: !WINDOWED && cfg.ui.startFullscreen,
+    width: 1600, height: 900, ...(seamless.savedBounds() || startBounds()), // Settings → Display: opens on the TV chosen there (the main display when it isn't connected); (beta.12) in Seamless play's Window mode, where it was left
+    fullscreen: !WINDOWED && seamless.startFullscreen(cfg.ui.startFullscreen), // (beta.12: Seamless play's Screen mode when it's on)
     backgroundColor: '#07070c',
     show: false, // shown once its first frame (the logo) is painted: no empty or half-drawn window while it starts
     autoHideMenuBar: true,
@@ -347,6 +365,7 @@ function createWindow() {
   // (beta.6) the taskbar hidden for a game comes back the moment you leave the fullscreen shelf: another app, the Start
   // menu, minimized, windowed (see taskbarBack)
   for (const ev of ['blur', 'leave-full-screen', 'minimize', 'hide']) win.on(ev, () => taskbarLeave(ev));
+  seamless.trackWindow(win); // (beta.12) Window mode remembers the window's place and size
 }
 // (a blur that only went to one of Boxshelf's own windows, a trailer, isn't leaving: that window is watched instead)
 function taskbarLeave(ev) {
@@ -364,7 +383,7 @@ const alive = () => win && !win.isDestroyed(); // the window can be gone already
 // Quitting a game: put Boxshelf's (black) screen in front *before* the emulator closes, so the Windows desktop never
 // shows in between; the shelf then fades in as usual once the emulator has exited (onExit → bringBack).
 function coverForQuit() {
-  markEvent('coverForQuit'); quitAt = Date.now(); quitSeq++;
+  markEvent('coverForQuit'); quitAt = Date.now(); quitSeq++; seamless.mark('quit: cover up');
   if (!alive()) return;
   // quit while the loading screen was still up: its pending lift must not step Boxshelf aside in the middle of the quit
   if (coverTimer) { clearInterval(coverTimer.keep); clearTimeout(coverTimer); coverTimer = null; }
@@ -409,7 +428,7 @@ function clearQuitCover() { if (quitCover) { clearInterval(quitCover); quitCover
 // back if Boxshelf crashes or is ended, and the next start does too. Settings → Display → Screen & motion turns it off.
 let tbHidden = false;
 const tbMark = () => path.join(app.getPath('userData'), 'taskbar-hidden');
-const tbWanted = () => process.platform === 'win32' && cfg.ui.hideTaskbar !== false;
+const tbWanted = () => process.platform === 'win32' && cfg.ui.hideTaskbar !== false && !seamless.windowMode(); // (beta.12: never in Seamless play's Window mode)
 async function taskbarHide() {
   if (!tbWanted() || tbHidden) return;
   tbHidden = true; try { fs.writeFileSync(tbMark(), String(Date.now())); padwatch.taskbarGuard(process.pid, tbMark()); } catch {} // (the guard: back even if Boxshelf crashes)
@@ -438,7 +457,7 @@ let goneCover = false;
 function onGameWindow(back) {
   if (!back) {
     if (!launcher.isRunning() || quitCover || coverTimer || homemenu.isOpen()) return;
-    log('Game window closed, the emulator still running: covering the screen until it exits'); coverForQuit(); goneCover = true; return;
+    log('Game window closed, the emulator still running: covering the screen until it exits'); coverForQuit(); goneCover = true; seamless.windowGone(); return; /* (beta.12: a watched game's end is looked for at once) */
   }
   if (!goneCover || !quitCover || !launcher.isRunning()) return;
   log('Game window back: stepping aside again'); clearQuitCover(); quitAt = 0;
@@ -463,6 +482,7 @@ function stepIn() {
 // the game's window is fullscreen: lift the cover a beat later (its first frame), never sooner than 0.8 s in
 function liftCover() {
   const t = coverTimer; if (!t || !t.lift) return;
+  seamless.mark('window up');
   const wait = Math.max(350, (t.minMs || 800) - (Date.now() - t.at));
   setTimeout(() => { if (coverTimer === t) { log('game window ready: lifting the loading screen'); t.lift(); } }, wait);
 }
@@ -486,7 +506,7 @@ function bringBack() {
     if (!alive() || launcher.isRunning()) { clearInterval(backKeep); backKeep = null; return; }
     const el = Date.now() - t0, focused = win.isFocused();
     if ((focused && el > 400) || el > 5000) {
-      clearInterval(backKeep); backKeep = null; try { win.setAlwaysOnTop(false); win.moveTop(); } catch {}
+      clearInterval(backKeep); backKeep = null; seamless.mark('shelf back'); try { win.setAlwaysOnTop(false); win.moveTop(); } catch {}
       if (!focused) log('Back on the shelf without the focus (Windows refused it)');
       taskbarBack(focused);
       return; }
@@ -504,6 +524,7 @@ function coverWhileStarting(seconds) {
   if (coverTimer && coverTimer.keep) clearInterval(coverTimer.keep);
   clearTimeout(coverTimer);
   if (!win || !(seconds > 0)) return 0;
+  seamless.mark('cover up');
   // In a window, the emulator's windows show around our edges: go fullscreen for the cover, then back
   const wasWindowed = !win.isFullScreen();
   if (wasWindowed) { try { win.setFullScreen(true); } catch {} }
@@ -532,7 +553,7 @@ function coverWhileStarting(seconds) {
     // appeared after the first one
     padwatch.front();
     // step aside without the minimize animation (the game is already fullscreen behind us); bringBack shows us again
-    stepAside();
+    stepAside(); seamless.mark('cover down');
     homemenu.ready(); setTimeout(() => { if (launcher.isRunning()) { padwatch.front(); homemenu.raise(); } }, 1500);
     }, 300);
   };
@@ -554,13 +575,23 @@ function watchPad(opts) {
     { ...opts, home, nin: true, taskbarHidden: tbHidden, onWindow: opts.appPid ? onGameWindow : undefined, cmdFile: path.join(app.getPath('temp'), `boxshelf-pad-${process.pid}.txt`), onHome: kind => { homemenu.setMeta({ glyphs: kind || shelfGlyphs }); /* the menu shows the buttons of the pad that opened it (an XInput pad: the shelf's last prompts) */ Promise.resolve(homemenu.open()).catch(e => log('home menu', e && e.message)); }, onButton: (b, d) => homemenu.button(b, d), isMenuOpen: () => homemenu.isOpen(), onFullscreen: opts.appPid ? liftCover : undefined,
       keepUp: () => launcher.isRunning() && !quitCover }); // (beta.10: a helper that dies mid-game is started again, not during a Quit)
 }
+// (beta.12, Linux) a Flatpak emulator that closed at once on a game outside your home folder (an SD card, a USB drive):
+// Flatpak keeps its apps out of those until allowed. The one line that allows it, or '' when that isn't the case
+function flatpakFix(l) {
+  if (!linux.isLinux || !l || !l.exe || !l.rom) return '';
+  const m = /\/flatpak\/exports\/bin\/([\w.-]+)$/.exec(l.exe); if (!m) return '';
+  const home = require('os').homedir(); let rom = path.resolve(l.rom); try { rom = fs.realpathSync(rom); } catch {} // (EmuDeck's ~/Emulation/roms is often a link to the SD card)
+  if (rom.startsWith(home + '/')) return '';
+  const top = (/^(\/run\/media\/[^/]+\/[^/]+|\/run\/media\/[^/]+|\/media\/[^/]+\/[^/]+|\/mnt\/[^/]+)/.exec(rom) || [])[1] || path.dirname(rom);
+  return `flatpak override --user --filesystem='${top.replace(/'/g, "'\\''")}' ${m[1]}`; // (quoted: a drive's name can have spaces)
+}
 function onExit(info) {
   linuxpad.end(); // (beta.9: the Linux pad watcher only runs during a game)
-  markEvent('game exited'); clearQuitCover(); wiimote.resume(); // (the Wii remote back to the shelf, after Dolphin had it)
+  markEvent('game exited'); seamless.mark('game ended'); clearQuitCover(); wiimote.resume(); // (the Wii remote back to the shelf, after Dolphin had it)
   // (1.82) a game's emulator that closed by itself within 5 s (a missing BIOS, keys or firmware, bad launch options) wasn't a
   // play: the shelf says which emulator closed instead of quietly coming back, and the history isn't touched
   const quick = !!(info && !info.failedToStart && info.code !== -1 && !quitAt && runKind === 'game' && lastLaunch && info.ms < 5000);
-  if (quick) { const def = CONSOLES.find(c => c.id === lastLaunch.systemId); info = { ...info, quick: true, emulatorName: (def && def.emulatorName) || 'The emulator' }; log('Emulator closed right away:', info.emulatorName, 'code', info.code, info.ms + ' ms'); }
+  if (quick) { const def = CONSOLES.find(c => c.id === lastLaunch.systemId); info = { ...info, quick: true, emulatorName: (def && def.emulatorName) || 'The emulator', flatpakFix: flatpakFix(lastLaunch) }; log('Emulator closed right away:', info.emulatorName, 'code', info.code, info.ms + ' ms'); }
   if (quitAt) { log('game closed', Date.now() - quitAt, 'ms after Quit' + (Date.now() - quitAt > 2400 ? ' (had to be forced)' : '')); quitAt = 0; }
   padwatch.stop(); homemenu.end(); if (info && (info.failedToStart || info.quick)) historyUndo(); else historyEnd();
   if (coverTimer && coverTimer.keep) clearInterval(coverTimer.keep);
@@ -578,6 +609,24 @@ function onExit(info) {
   if (alive()) win.webContents.send('run:exited', info);
   if (pendingPower) { const p = pendingPower; pendingPower = null; if (Date.now() - p.at < 20000) { setTimeout(() => powerAction(p.kind), 800); setTimeout(() => { if (alive() && !launcher.isRunning()) watchShelf(); }, 15000); return; } /* a cancelled shutdown still needs Guide back */ log('Power: dropped a stale', p.kind); } // a game that took ages to close: don't shut the PC down out of the blue later
   setTimeout(watchShelf, 1500);
+}
+// ---------- (beta.12) Seamless play: what main/seamless.js needs from here ----------
+// the latest the loading cover waits, from now (a watched game's process has just appeared: its window gets this long)
+function coverDeadline(seconds) {
+  const t = coverTimer; if (!t || !t.lift || !(seconds > 0)) return;
+  clearTimeout(t); const n = setTimeout(t.lift, seconds * 1000);
+  Object.assign(n, { keep: t.keep, lift: t.lift, at: t.at, minMs: t.minMs }); coverTimer = n;
+}
+// a watched game's playtime (its launch was already counted by history:touch: only the time is added, at onExit)
+function historyTrack(id) { histOpen = { id: String(id).slice(0, 1024), at: Date.now(), prev: null }; }
+// a Steam / store game that never showed up within 90 s: today's behaviour, the shelf with "Running through Steam"
+function watchGaveUp() {
+  clearQuitCover(); padwatch.stop(); homemenu.end(); linuxpad.end(); // (beta.12: the Linux pad watcher a watched Steam game started)
+  if (coverTimer) { clearInterval(coverTimer.keep); clearTimeout(coverTimer); coverTimer = null; }
+  if (coverWindowed && alive()) { try { win.setFullScreen(false); } catch {} coverWindowed = false; }
+  padwatch.cover(false); bringBack();
+  if (alive()) win.webContents.send('run:watchGaveUp');
+  setTimeout(() => { if (!launcher.isRunning()) watchShelf(); }, 1500);
 }
 
 // Freeze watch: if the main process is blocked for more than a quarter second, log it with what was going on
@@ -606,6 +655,9 @@ function iconQuick(exe) {
 const STORE_SRC = new Set(['epic', 'gog', 'ubisoft', 'ea', 'xbox']);
 async function buildLibrary() {
   const shelves = [];
+  // (beta.12) RomM: the saved copy of its library for this build, and one background sync a little after the first
+  if (rommOn() && !rommLib) await rommLoad();
+  if (rommOn() && !rommSyncedOnce) { rommSyncedOnce = true; rommSync(20000); }
   for (const def of CONSOLES) {
     const sc = cfg.systems[def.id];
     if (!sc || !sc.enabled) continue;
@@ -619,6 +671,7 @@ async function buildLibrary() {
     for (const g of await scanSystemAsync(def, sc)) { if (Date.now() - t0 > 25) { await new Promise(r => setImmediate(r)); t0 = Date.now(); }
       games.push({ ...g, info: covers.gameInfo(def.id, g.title), manualMiss: manualMiss(def.id, g), art: { front: fileUrl(g.art.front), hero: fileUrl(g.art.hero), back: fileUrl(g.art.back), madeBack: g.art.madeBack || undefined, spine: fileUrl(g.art.spine), madeSpine: g.art.madeSpine || undefined, disc: fileUrl(g.art.disc), manual: def.id === 'wiiu' ? await withCoverAsync(def.id, g, (g.art.manual || []).map(fileUrl)) /* (beta.10: async) */ : (g.art.manual || []).map(fileUrl), manualPdf: fileUrl(g.art.manualPdf) } }); }
     // (beta.7) arcade zips are named from FinalBurn Neo's list: fetched once in the background, then the shelf refreshes
+    for (const g of rommGames(def.id, games)) games.push(g); // (beta.12) this console's RomM games not on this PC yet
     if (games.length && arcadenames.SYSTEMS.has(def.id) && !arcadenames.ready()) arcadenames.fetchNames().then(ok => { if (ok && alive()) win.webContents.send('library:changed', { arcade: 1 }); });
     shelves.push({ id: def.id, kind: 'console', name: def.name, emulatorName: def.emulatorName, hasEmulator: !!sc.emulator && paths.isFile(emuPath(sc.emulator)) /* (1.82) an uninstalled one gets no Open tile */, emulator: sc.emulator, emulatorIcon: fileUrl(await iconQuick(sc.emulator)), gameArgs: sc.gameArgs, bootOnLaunch: sc.bootOnLaunch !== false, useIpl: def.id === 'gc' && !!sc.useIpl, insertAnim: sc.insertAnim !== false, games });
   }
@@ -626,7 +679,7 @@ async function buildLibrary() {
   // (beta.10) Steam was only looked for in the first-run setup: one installed later, moved, or not found then never showed.
   // While Steam is on and its folder is unset or wrong, look again (once per session) and keep what's found
   if (cfg.steam.enabled && !steamRoot(cfg.steam.path) && !steamLooked) { steamLooked = true;
-    try { const p = await findSteam(); if (p && steamRoot(p)) { cfg = persistCfg(config.normalize({ ...cfg, steam: { ...cfg.steam, path: p } })); log('Steam: found it, set as the Steam folder'); } else log('Steam: not found (not in the registry or the usual folders); choose its folder in Settings → PC games'); } catch (e) { log('Steam: looking for it failed', e.message); } }
+    try { const p = await findSteam(); if (p && steamRoot(p)) { steamAuto = p; cfg = persistCfg(config.normalize({ ...cfg, steam: { ...cfg.steam, path: p } })); log('Steam: found it, set as the Steam folder'); } else log('Steam: not found (not in the registry or the usual folders); choose its folder in Settings → PC games'); } catch (e) { log('Steam: looking for it failed', e.message); } }
   // (beta.10) the folder set is a library on another drive, not Steam's own: Steam's own folder is looked for once a
   // session too, so every drive's library, playtimes and covers come along
   const steamGiven = cfg.steam.enabled && steamRoot(cfg.steam.path);
@@ -676,8 +729,19 @@ homemenu.init({ padwatch, log, getWin: () => (alive() ? win : null), getUi: () =
     // power actions: hand the shelf back first, so after waking (or a cancelled shutdown) it takes input again
     if (['sleep', 'restart', 'shutdown'].includes(action)) { if (alive()) win.webContents.send('shelf:menu', { open: false, action: 'resume' }); return powerAction(action); }
     if (action === 'quitapp') { log('Quit: Exit Boxshelf chosen in the Home menu'); return app.quit(); }
+    // (beta.12, Seamless play) Go to desktop: Boxshelf minimised (Guide or the taskbar brings it back, see openShelfMenu)
+    if (action === 'desktop') { if (alive()) win.webContents.send('shelf:menu', { open: false, action }); if (!(alive() && seamless.goToDesktop(win))) bringBack(); return; }
     if (alive()) { win.webContents.send('shelf:menu', { open: false, action }); bringBack(); }
   } });
+// (beta.12) Seamless play (main/seamless.js): what it uses from here. Off (Settings → Display), nothing of it runs.
+seamless.init({ cfg: () => cfg, log, platform: process.platform, runningName: () => launcher.runningName(),
+  saveUi: patch => { cfg = persistCfg(config.normalize({ ...cfg, ui: { ...cfg.ui, ...patch } })); },
+  busyCheck: () => busyCheck(), setLaunching: v => { launching = !!v; }, taskbarHide: () => taskbarHide(), taskbarShow: why => taskbarShow(why),
+  beginRun: () => { runKind = 'watch'; pendingPower = null; }, onExit: info => onExit(info), launcher,
+  homeBegin: meta => { if (cfg.ui.homeMenu !== false) homemenu.begin(meta); }, homeMeta: m => homemenu.setMeta(m),
+  watchPad: o => watchPad(o), coverAgain: () => { if (coverTimer || quitCover) padwatch.cover(true); }, coverWhileStarting: s => coverWhileStarting(s), coverDeadline: s => coverDeadline(s),
+  historyTrack: id => historyTrack(id), gaveUp: () => watchGaveUp() });
+launcher.setEventHook(what => seamless.mark(what)); // (the launch timeline: when the game's process started)
 // Sleep / Restart / Shut down the PC from the couch
 let pendingPower = null, lastPadOpts = null, runKind = null;
 // Media apps close at once (and some only hide to the tray): force them sooner than emulators, which may be saving
@@ -699,6 +763,15 @@ function applyScale() {
 let scaleT = null; const applyScaleSoon = () => { clearTimeout(scaleT); scaleT = setTimeout(applyScale, 150); };
 function powerAction(kind) {
   log('Power:', kind);
+  // (beta.12) Linux / Steam Deck: systemd's own (SteamOS lets the Deck's user suspend, reboot and power off without a password)
+  if (process.platform === 'linux') {
+    const cmd = kind === 'sleep' ? 'suspend' : kind === 'restart' ? 'reboot' : kind === 'shutdown' ? 'poweroff' : '';
+    // (beta.12) a desktop distro may refuse it (polkit asks for a password, or isn't allowed): said on the screen, not only logged
+    const said = { sleep: 'Sleep', restart: 'Restart', shutdown: 'Shut down' }[kind];
+    const fail = m => { log('Power failed', m); try { if (alive()) win.webContents.send('app:notice', `${said} didn't work: this PC didn't allow it. Use your desktop's own power menu.`); } catch {} };
+    if (cmd) try { require('child_process').execFile('systemctl', [cmd], { timeout: 20000 }, (e, _o, se) => { if (e && !/Connection reset|disconnected/i.test(String(se || ''))) fail(String(se || e.message).trim().split('\n')[0]); }); } catch (e) { fail(e.message); }
+    return;
+  }
   if (process.platform !== 'win32') return;
   try {
     if (kind === 'sleep') spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command', "Add-Type -AssemblyName System.Windows.Forms; [void][System.Windows.Forms.Application]::SetSuspendState('Suspend', $false, $false)"], { windowsHide: true, stdio: 'ignore', detached: true }).on('error', e => log('Power failed', e.message)).unref();
@@ -708,8 +781,11 @@ function powerAction(kind) {
 // On the shelf the XInput helper still runs (lightly) so Guide can open the Home menu even though Chromium never sees it
 function watchShelf() {
   if (cfg.ui.homeMenu === false || launcher.isRunning()) return;
+  // (beta.12) a Guide "press" in the helper's first moment is a stale state (a pad coming up through Steam, the echo of the
+  // Guide that ended a game): it opened the Home menu over the shelf, which then closed again at once
+  const t0 = Date.now();
   padwatch.start('none', 900, () => {}, { home: true, backHome: false, taskbarHidden: tbHidden /* (beta.6: kept hidden until you leave the shelf) */, cmdFile: path.join(app.getPath('temp'), `boxshelf-pad-${process.pid}.txt`),
-    onHome: () => { if (!closeTrailer()) openShelfMenu(); }, onButton: (b, d) => { if (d && (b === 'b' || b === 'back') && !homemenu.isOpen() && closeTrailer()) return; homemenu.button(b, d); }, isMenuOpen: () => homemenu.isOpen() });
+    onHome: () => { if (Date.now() - t0 < 1500) { log('Guide: ignored just after the controller helper started'); return; } if (!closeTrailer()) openShelfMenu(); }, onButton: (b, d) => { if (d && (b === 'b' || b === 'back') && !homemenu.isOpen() && closeTrailer()) return; homemenu.button(b, d); }, isMenuOpen: () => homemenu.isOpen() });
 }
 // With the Home menu off no shelf helper follows the game's, and Windows won't let Boxshelf take the focus back by
 // itself: run a short-lived helper just to hand it over (bringBack's request is repeated by a new helper)
@@ -721,11 +797,12 @@ function focusOnlyHelper() {
 }
 // from Guide: only when Boxshelf itself is what you're looking at; from the shelf's Home key: always
 function openShelfMenu(fromKey) {
+  if (alive() && !launcher.isRunning() && seamless.backFromDesktop(win)) { log('Guide: back from the desktop'); bringBack(); return; } // (beta.12, Seamless play: after Go to desktop)
   if (!alive() || homemenu.isOpen() || launcher.isRunning() || (!fromKey && (!win.isFocused() || cfg.ui.homeMenu === false))) return;
   // Guide: ask the shelf first — it only accepts on the shelf or the details panel (not Inspect, museum, Settings, starting a game)
   if (!fromKey) { win.webContents.send('shelf:menuRequest'); return; }
   if (!padwatch.isRunning()) watchShelf(); // buttons inside the menu come from the helper
-  if (homemenu.openShelf({ title: 'Home', system: 'Boxshelf', subtitle: shelfSummary, accent: '#9d8cff', glyphs: shelfGlyphs, layout: cfg.ui.homeLayout === 'center' ? 'center' : 'side', confirmButton: shelfSwap ? 'b' : 'a', audioOut: typeof cfg.ui.audioOut === 'string' ? cfg.ui.audioOut : '' }))
+  if (homemenu.openShelf({ ...(seamless.on() ? { actions: seamless.shelfActions() } : {}), title: 'Home', system: 'Boxshelf', subtitle: shelfSummary, accent: '#9d8cff', glyphs: shelfGlyphs, layout: cfg.ui.homeLayout === 'center' ? 'center' : 'side', confirmButton: shelfSwap ? 'b' : 'a', audioOut: typeof cfg.ui.audioOut === 'string' ? cfg.ui.audioOut : '' }))
     win.webContents.send('shelf:menu', { open: true });
 }
 // ---------- the Wii remote on the shelf (Windows) ----------
@@ -797,7 +874,7 @@ ipcMain.on('shelf:info', (e, i) => { if (i && typeof i === 'object') { shelfSumm
 ipcMain.on('shelf:openMenu', () => openShelfMenu(true));
 ipcMain.on('shelf:menuKey', (e, k) => { const map = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', Enter: 'ok', Escape: 'cancel', Backspace: 'cancel', Home: 'home' } /* keys mean select / back whichever face button confirms */; const b = map[k && k.key]; if (b) homemenu.button(b, !!k.down); });
 // the overlay reports the chosen action; the shelf adds what it knows about the game (title, cover, colour, prompts)
-const HOME_ACTIONS = ['resume', 'save', 'load', 'shot', 'quit', 'sleep', 'restart', 'shutdown', 'quitapp', 'shelfhome', 'museum', 'settings'];
+const HOME_ACTIONS = ['resume', 'save', 'load', 'shot', 'quit', 'sleep', 'restart', 'shutdown', 'quitapp', 'shelfhome', 'museum', 'settings', 'desktop']; // (beta.12: desktop = Seamless play's Go to desktop)
 ipcMain.on('home:act', (e, a) => homemenu.act(HOME_ACTIONS.includes(a) ? a : 'resume')); // anything unexpected still closes the menu properly
 ipcMain.on('home:meta', (e, m) => { if (!m || typeof m !== 'object') return; const str = v => typeof v === 'string' ? v.slice(0, 4000000) : undefined;
   homemenu.setMeta({ title: str(m.title), cover: str(m.cover), accent: /^#[0-9a-f]{3,8}$/i.test(m.accent || '') ? m.accent : undefined, glyphs: glyphsOf(m.glyphs), layout: cfg.ui.homeLayout === 'center' ? 'center' : 'side' }); });
@@ -819,13 +896,19 @@ handle('clipboard:text', () => { const { clipboard } = require('electron'); retu
 handle('config:get', () => ({ config: cfg, consoles: CONSOLES, apps: APPS, appRoot: paths.appRoot(), version: app.getVersion(), hasInfo: covers.hasInfo(), settingsBlocked: config.blocked() }));
 // (1.82) Settings → About: the newest beta (force: ask GitHub now, not the answer from this start) and the page's links
 handle('app:updateCheck', ({ force } = {}) => updates.check(app.getVersion(), !!force).then(r => ({ ...r, links: updates.LINKS })));
-handle('config:save', next => { if (!next || typeof next !== 'object' || !next.systems || !next.ui) throw new Error('Bad settings.'); scanForget(); return applyCfg({ ...next, art: cfg.art, games: cfg.games, emuSetup: { ...(next.emuSetup || {}), pending: (cfg.emuSetup || {}).pending || [] }, ui: { ...next.ui, sw2Last: cfg.ui.sw2Last } }); }); // Art Studio styles and locks change through art:* only: a Settings save with its older copy mustn't undo them. (beta.8) The same for what main itself keeps: each game's own name and emulator (Details → Rename / Emulator), Set up for me's waiting list and Switch 2's last build: a screen's older copy saved later used to undo a rename, or bring back a setup that was already done
+// (beta.12) the screen mode and the window's place are main's own (F11, Settings → Screen mode): a screen's older copy saved later doesn't undo them
+handle('config:save', next => { if (!next || typeof next !== 'object' || !next.systems || !next.ui) throw new Error('Bad settings.'); scanForget(); return applyCfg({ ...next, art: cfg.art, games: cfg.games, emuSetup: { ...(next.emuSetup || {}), pending: (cfg.emuSetup || {}).pending || [] }, ui: { ...next.ui, sw2Last: cfg.ui.sw2Last, screenMode: cfg.ui.screenMode, windowBounds: cfg.ui.windowBounds }, ...(next.steam && !next.steam.path && steamAuto && cfg.steam && cfg.steam.path === steamAuto ? { steam: { ...next.steam, path: steamAuto } } : {}),
+  keys: { ...(next.keys || {}), ...rommKeysFor(next) } }); }); // (beta.12: RomM's sign-in is main's: set by pairing, cleared by Sign out, or by the server address changing)
+// (beta.12) the Steam folder main found by itself this session: a screen's older copy without it doesn't undo it (a path
+// the player cleared on purpose is one main didn't just find, so it stays cleared)
+let steamAuto = ''; // Art Studio styles and locks change through art:* only: a Settings save with its older copy mustn't undo them. (beta.8) The same for what main itself keeps: each game's own name and emulator (Details → Rename / Emulator), Set up for me's waiting list and Switch 2's last build: a screen's older copy saved later used to undo a rename, or bring back a setup that was already done
 // settings saved (or restored from a backup): store them and put every change into effect now
 function applyCfg(next) { const prev = cfg, hadMenu = cfg.ui.homeMenu !== false; next = rememberEmus(prev, next); const x = o => o && o.systems && o.systems.x360 && o.systems.x360.emulator; if (x(next) !== x(prev)) next = fixXenia(next); /* (the folder walk only when that path changed) */ cfg = persistCfg(config.normalize(next)); applyArtLibrary(); applyScale(); setTimeout(watchRoms, 0); if (cfg.ui.wiimote === false) wiimote.stop(); else if (wmReady) wmStart(); /* (Settings → Controller → Wii remote, at once) */
   // Home menu switched on/off: start or stop the shelf's Guide watcher now (not after the next game)
   if (!launcher.isRunning() && hadMenu !== (cfg.ui.homeMenu !== false)) { if (cfg.ui.homeMenu === false) padwatch.stop(); else watchShelf(); }
   ra.setCredentials(cfg.ra && cfg.ra.enabled !== false ? cfg.ra.user : '', cfg.ra && cfg.ra.key);
   try { cfgChanged(prev, cfg); } catch (e) { log('settings change', e.message); }
+  try { seamless.applied(prev.ui, cfg.ui, alive() && !launcher.isRunning() ? win : null); } catch {} // (beta.12: Seamless play turned off: the screen as before)
   return cfg; }
 handle('detect', () => detectAll());
 // The last scan is kept on disk so the next launch can show the shelves immediately (as console UIs do) while a fresh
@@ -1281,8 +1364,49 @@ async function renderSpine(id, title, front) {
   return Buffer.from(m[1], 'base64');
 }
 artstudio.setMaker({ back: renderBack, spine: renderSpine });
+// (beta.12, Linux Game Mode) the desktop's file dialog can't be driven with a controller there (and may not show at all):
+// every pick opens Boxshelf's own browser on the screen instead (renderer/picker.js). Same answer as showOpenDialog
+const pickWaits = new Map(); let pickSeq = 0;
+ipcMain.on('pick:done', (e, d) => { if (!alive() || e.sender !== win.webContents) return; const id = d && d.id, f = pickWaits.get(id); if (!f) return; pickWaits.delete(id); f(d || {}); });
+// (the page reloaded or went while a pick was open: it can't answer any more, so it counts as cancelled)
+const pickDrop = () => { for (const f of pickWaits.values()) { try { f({}); } catch {} } pickWaits.clear(); };
+let pickHooked = null;
+function pickHook() { if (!alive() || pickHooked === win) return; pickHooked = win; try { win.webContents.on('did-start-navigation', (e, url, inPlace, main) => { if (main !== false && !inPlace) pickDrop(); }); win.webContents.on('render-process-gone', pickDrop); win.on('closed', pickDrop); } catch {} }
+async function openDialog(parent, o) {
+  if (!(linux.isLinux && steamdeck.gameMode() && alive())) return dialog.showOpenDialog(parent, o);
+  pickHook();
+  const props = o.properties || [], id = ++pickSeq, exts = [...new Set((o.filters || []).flatMap(f => (f && f.extensions) || []).map(x => String(x).toLowerCase()))].filter(x => x !== '*');
+  const res = await new Promise(resolve => { pickWaits.set(id, resolve); try { win.webContents.send('pick:open', { id, folder: props.includes('openDirectory'), title: String(o.title || ''), start: String(o.defaultPath || ''), exts }); } catch { pickWaits.delete(id); resolve({}); } });
+  return res && res.path ? { canceled: false, filePaths: [String(res.path)] } : { canceled: true, filePaths: [] };
+}
+// the browser's folder listing: names only, folders first (hidden ones left out), only what the pick can use (folders, and
+// for a file pick the files of its kinds), at most 5000. Read without holding the main process up (a No-Intro or MAME
+// folder has tens of thousands of files)
+const fsCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+handle('fs:list', async ({ dir, folder, exts } = {}) => {
+  if (!linux.isLinux) throw new Error('Only on Linux.');
+  const d = path.resolve(String(dir || require('os').homedir())), parent = path.dirname(d) !== d ? path.dirname(d) : '';
+  let ents; try { ents = await fs.promises.readdir(d, { withFileTypes: true }); } catch (e) { return { dir: d, parent, entries: [], error: e.code === 'EACCES' ? "Boxshelf isn't allowed to look in this folder." : "Couldn't open this folder." }; }
+  const want = Array.isArray(exts) ? exts.map(x => String(x).toLowerCase()).filter(x => x && x !== 'exe') : [], keep = n => { if (folder) return false; if (!want.length) return true; const m = /\.([^.]+)$/.exec(n); return !!m && want.includes(m[1].toLowerCase()); };
+  const out = [];
+  for (const en of ents) { if (en.name.startsWith('.')) continue; let isDir = en.isDirectory(); if (en.isSymbolicLink()) { try { isDir = (await fs.promises.stat(path.join(d, en.name))).isDirectory(); } catch { continue; } } if (isDir || keep(en.name)) out.push({ n: en.name, d: isDir }); }
+  out.sort((a, b) => (b.d - a.d) || fsCollator.compare(a.n, b.n));
+  return { dir: d, parent, entries: out.slice(0, 5000), more: Math.max(0, out.length - 5000) };
+});
+// the browser's places: home, the SD card / USB drives, EmuDeck's and RetroDECK's folders, Applications, Downloads (the ones there)
+handle('fs:places', () => {
+  if (!linux.isLinux) return [];
+  const os = require('os'), h = os.homedir(), user = os.userInfo().username, out = [], add = (label, p) => { try { if (fs.statSync(p).isDirectory() && !out.some(x => x.path === p)) out.push({ label, path: p }); } catch {} };
+  add('Home', h);
+  for (const base of ['/run/media/' + user, '/run/media', '/media/' + user]) { let L = []; try { L = fs.readdirSync(base, { withFileTypes: true }); } catch {} for (const e of L) if (e.isDirectory() && e.name !== user) add(/^mmcblk/.test(e.name) ? 'SD card' : e.name, path.join(base, e.name)); }
+  add('Emulation (EmuDeck)', path.join(h, 'Emulation')); add('RetroDECK', path.join(h, 'retrodeck')); add('Applications', path.join(h, 'Applications'));
+  add('Downloads', path.join(h, 'Downloads')); add('Desktop', path.join(h, 'Desktop'));
+  // (hidden folders aren't listed: the Flatpak emulators' own folder gets a place, so one can be picked as the emulator)
+  add('Flatpak apps', path.join(h, '.local/share/flatpak/exports/bin')); add('Flatpak apps (system)', '/var/lib/flatpak/exports/bin'); add('Whole drive', '/');
+  return out;
+});
 handle('dialog:pick', async ({ kind, title, defaultPath, filters, multi }) => {
-  const r = await dialog.showOpenDialog(win, {
+  const r = await openDialog(win, {
     title, defaultPath,
     properties: kind === 'folder' ? ['openDirectory'] : multi ? ['openFile', 'multiSelections'] : ['openFile'], // (beta.7) multi: Add games → Add several programs
     // (Linux: programs have no .exe, so a "Programs" filter would hide every emulator: there it shows all files)
@@ -1311,8 +1435,8 @@ handle('games:covers', async ({ items }) => {
   const ok = new Set(pnPlan ? pnPlan.pc.flatMap(g => [g.cover, g.bg]).filter(Boolean).map(f => path.resolve(f).toLowerCase()) : []); let n = 0;
   const slug = s => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'game';
   for (const it of (Array.isArray(items) ? items : []).slice(0, 2000)) { const f = it && String(it.file || ''); if (!f || !ok.has(path.resolve(f).toLowerCase())) continue;
-    try { await pccovers.own('custom-' + slug(it.id), f); n++; } catch (e) { log('Imported cover', e.message); } }
-  if (n && alive()) win.webContents.send('library:changed', { pcCover: 1 }); return n;
+    try { await pccovers.own('custom-' + slug(it.id), f); pcCoverBump('custom-' + slug(it.id)); n++; } catch (e) { log('Imported cover', e.message); } }
+  if (n) { scanCfg = null; if (alive()) win.webContents.send('library:changed', { pcCover: 1 }); } return n;
 });
 // Xenia Manager picked instead of Xenia itself: the setting switches to the real emulator. Done on the config as it is
 // loaded and saved (never in place during a scan): Settings gets the fixed path back from its save, so its own copy
@@ -1355,7 +1479,7 @@ handle('game:emulator', async ({ id }) => {
   const r = await dialog.showMessageBox(alive() ? win : undefined, { type: 'question', title: 'Emulator for this game', message: 'Which emulator should this game use?', detail, buttons, defaultId: 0, cancelId: buttons.length - 1, noLink: true });
   const act = acts[r.response] || 'cancel'; let exe = '';
   if (act === 'cancel') return { ok: false, canceled: true, games: cfg.games };
-  if (act === 'pick') { const f = await dialog.showOpenDialog(alive() ? win : undefined, { title: `Emulator for this game (${def.emulatorName} or a build of it)`, defaultPath: cur || shelfExe || undefined, properties: ['openFile'], filters: linux.isLinux ? undefined : [{ name: 'Programs', extensions: ['exe'] }, { name: 'All files', extensions: ['*'] }] }); if (f.canceled || !f.filePaths || !f.filePaths[0]) return { ok: false, canceled: true, games: cfg.games }; exe = f.filePaths[0]; }
+  if (act === 'pick') { const f = await openDialog(alive() ? win : undefined, { title: `Emulator for this game (${def.emulatorName} or a build of it)`, defaultPath: cur || shelfExe || undefined, properties: ['openFile'], filters: linux.isLinux ? undefined : [{ name: 'Programs', extensions: ['exe'] }, { name: 'All files', extensions: ['*'] }] }); if (f.canceled || !f.filePaths || !f.filePaths[0]) return { ok: false, canceled: true, games: cfg.games }; exe = f.filePaths[0]; }
   if (act === 'sugg') exe = sugg;
   const games = { ...(cfg.games || {}) };
   if (act === 'default' || (exe && path.resolve(exe).toLowerCase() === path.resolve(shelfExe || '.').toLowerCase())) { const o = { ...(games[id] || {}) }; delete o.emulator; if (Object.keys(o).length) games[id] = o; else delete games[id]; } else games[id] = { ...(games[id] || {}), emulator: exe }; // (beta.8: the game's own name stays)
@@ -1424,7 +1548,12 @@ handle('launch:game', async ({ systemId, file, emulator }) => {
   if (systemId === 'sw2' && !paths.isFile(sc.emulator)) { const b = (await nx2.builds(sw2Roots())).filter(x => !/\.nup$/i.test(file) || x.nup).sort((a, c) => c.date - a.date)[0]; if (b) sc = { ...sc, emulator: b.exe }; }
   }
   if (launching || launcher.isRunning()) throw new Error(launcher.busyMessage()); // (beta.10: names what's running)
-  launching = true; try { return await launchGameNow(systemId, file, sc); } finally { launching = false; }
+  launching = true;
+  try {
+    // (beta.12) a RomM game not on this PC yet: downloaded first (its progress on the boot slide), then started like any game
+    if (!paths.isFile(file) && !paths.isDir(file) && rommOn()) { const got = await rommFetch(systemId, file); if (got) { file = got; if (alive()) win.webContents.send('library:changed', { romm: 1 }); } }
+    return await launchGameNow(systemId, file, sc);
+  } finally { launching = false; }
 });
 // (beta.6) RetroArch's cores: <its folder>\cores\<core>_libretro.dll, or the folder its own settings name
 // (retroarch.cfg's libretro_directory; ":" there means RetroArch's own folder)
@@ -1445,6 +1574,9 @@ function retroCore(exe, core) {
 }
 async function launchGameNow(systemId, file, sc) {
   if (systemId === 'ps4' && /\.pkg$/i.test(file)) throw new Error('This PS4 game is still a .pkg package, which shadPS4 can\'t run. Extract it to a folder first (current shadPS4 builds no longer install packages themselves) with a PKG extractor such as PKG Editor or the ShadPS4Plus pkg_extractor, into a folder inside your PS4 games folder. Once that folder has an eboot.bin in it, the game shows up here as installed.');
+  // (beta.12, Windows) a console started through RocketLauncher: its own path (launchViaRocket); none of the emulator
+  // preparation below applies, RocketLauncher picks and starts the emulator itself
+  if (rocket.useFor(systemId, cfg)) { const via = await launchViaRocket(systemId, file, sc); if (via) return via; }
   if (systemId === 'x360') sc.emulator = emucfg.resolveExe('x360', sc.emulator).exe; // (sc is this launch's copy: the saved setting is fixed on load / save)
   // (1.82) no emulator, or one that's gone: say which console and emulator, before anything is prepared for it (Dolphin's
   // settings, a 3DS .cia installed into Azahar's folder)
@@ -1494,7 +1626,7 @@ async function launchGameNow(systemId, file, sc) {
   let r; try { r = launcher.launchGame(sc, rom, onExit, extra, env); } catch (e) { wiimote.resume(); taskbarShow('the game did not start'); throw e; } runKind = 'game'; pendingPower = null; launcher.setRunningName(gameTitleOf(systemId, file)); if (linux.isLinux) linuxpad.begin(() => closeGame()); // (beta.9: hold Select + Start to close it)
   // (Dolphin: once it has the remote, Boxshelf listens alongside for a held Home; listening only, nothing is sent)
   if (systemId === 'gc' || systemId === 'wii' || /dolphin/i.test(path.basename(sc.emulator || ''))) setTimeout(() => { if (launcher.isRunning()) wiimote.watch(); }, 4000);
-  lastLaunch = { systemId, at: Date.now() }; historyStart(systemId + ':' + file);
+  lastLaunch = { systemId, at: Date.now(), rom: String(rom || ''), exe: String(sc.emulator || '') }; historyStart(systemId + ':' + file); // (beta.12: the game and emulator, for the Linux Flatpak hint)
   const def = CONSOLES.find(c => c.id === systemId);
   if (cfg.ui.homeMenu !== false) homemenu.begin({ systemId, exe: sc.emulator, systemName: def ? def.name : systemId, hotkeys: sc.hotkeys });
   const base = ipl ? (sc.iplCoverSeconds ?? 2.5) : (+sc.coverSeconds || 0);
@@ -1516,6 +1648,122 @@ async function launchGameNow(systemId, file, sc) {
   if (!(cover > 0)) for (const ms of [2500, 4500]) setTimeout(() => { if (seq === noCoverSeq && qs === quitSeq && launcher.isRunning()) { padwatch.front(); homemenu.ready(); homemenu.raise(); } }, ms);
   return { ...r, cover };
 }
+// (beta.12, Windows) Play through RocketLauncher (docs/ROCKETLAUNCHER-PLAN.md): it brings its fade, bezels and pause menu
+// and starts the emulator set up in RocketLauncherUI; Boxshelf waits on it like on any game (Home menu, playtime, the
+// return). Boxshelf's own cover lifts at once (RocketLauncher's fade takes over) and it's never named as -f, so
+// RocketLauncher leaves its window alone. "Every console": a console RocketLauncher has no system for keeps its
+// emulator (null back: the usual launch)
+async function launchViaRocket(systemId, file, sc) {
+  const exe = cfg.rocket && cfg.rocket.exe;
+  if (!exe || !paths.isFile(exe)) throw new Error("RocketLauncher isn't where Settings → Consoles says. Find it again there, or start this console with its emulator.");
+  const list = await rocket.systems(exe), system = String(sc.rocketSystem || '').trim() || rocket.nameFor(systemId, list);
+  const a = rocket.argsFor({ system, file, list, plugin: cfg.rocket.frontend || '' });
+  if (!a.known && cfg.rocket.mode === 'all' && sc.viaRocket !== true) return null;
+  if (a.known && a.ready === false) throw new Error(`RocketLauncher has no emulator set for ${system} yet. Set one in RocketLauncherUI, or start this console with its emulator (Settings → Consoles).`);
+  await taskbarHide();
+  const t0 = Date.now();
+  const done = info => { rocket.lastError(exe, t0).then(err => { if (err && info && !info.error && info.code !== -1) log('RocketLauncher said:', err); onExit(err && info && !info.error ? { ...info, error: 'RocketLauncher: ' + err } : info); }, () => onExit(info)); };
+  let r; try { r = launcher.launchRocket(exe, a.args, done); } catch (e) { taskbarShow('the game did not start'); throw e; }
+  runKind = 'game'; pendingPower = null; launcher.setRunningName(gameTitleOf(systemId, file));
+  log('RocketLauncher launch:', systemId, '-s', system, a.inRoms ? '(by name)' : '(by path)');
+  lastLaunch = { systemId, at: Date.now() }; historyStart(systemId + ':' + file);
+  const def = CONSOLES.find(c => c.id === systemId);
+  if (cfg.ui.homeMenu !== false) homemenu.begin({ systemId, exe, systemName: def ? def.name : systemId, hotkeys: {} });
+  watchPad({ appPid: r.pid, home: true });
+  return { ...r, cover: coverWhileStarting(1) };
+}
+// ---------- (beta.12) RomM, a self-hosted game library (main/romm.js) ----------
+// Its games join their console's shelf at the place they'll have once downloaded (<the console's first games folder>\
+// <RomM's file name>, so favourites and playtime carry over), with a cloud badge until then. Play downloads one first,
+// its progress on the boot slide, B cancels (the part kept for a resume). The library is the saved copy at once and a
+// background sync once the shelf is up; covers are RomM's until Boxshelf's own art arrives.
+let rommLib = null, rommSyncing = null, rommDl = null, rommLocal = null, rommSyncedOnce = false;
+// (beta.12) RomM's sign-in token belongs to the server it was paired with (keys.rommTokenServer, its origin): it's never
+// sent anywhere else. A token saved before this (no origin with it) is taken as the saved server's, once.
+function rommApply() { const r = cfg.romm || {}, k = cfg.keys || {}; try { romm.setServer(r.server || '', { skipTlsVerify: !!r.skipTls }); const o = romm.originOf(r.server); let t = k.rommToken || '';
+  if (t && !k.rommTokenServer && o) cfg.keys = { ...k, rommTokenServer: o }; else if (t && k.rommTokenServer !== o) t = '';
+  romm.setToken(t); } catch (e) { log('RomM', e.message); } }
+// a Settings save: the token stays only while the server address still leads to the one it was paired with
+function rommKeysFor(next) { const k = cfg.keys || {}, o = romm.originOf(next && next.romm && next.romm.server), bound = k.rommTokenServer || romm.originOf(cfg.romm && cfg.romm.server);
+  const keep = !!k.rommToken && !!o && o === bound; if (k.rommToken && !keep) log('RomM: the server address changed, so the old sign-in was dropped (it belongs to the other server)');
+  return { rommToken: keep ? k.rommToken : '', rommTokenServer: keep ? bound : '' }; }
+const rommOn = () => !!(cfg.romm && cfg.romm.server && (cfg.keys || {}).rommToken);
+const rommDir = sysId => { const d = ((cfg.systems[sysId] || {}).romDirs || [])[0]; return d ? (emuPath(d) || d) : path.join(app.getPath('userData'), 'RomM games', sysId); };
+const rommSafe = n => String(n || 'game').replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_').replace(/[. ]+$/, '').slice(0, 180) || 'game';
+// where each downloaded RomM game ended up (a multi-file game's launch file is inside its own folder)
+const rommLocalFile = () => path.join(app.getPath('userData'), 'romm-local.json');
+function rommLocalGet() { if (!rommLocal) { try { rommLocal = JSON.parse(fs.readFileSync(rommLocalFile(), 'utf8')) || {}; } catch { rommLocal = {}; } } return rommLocal; }
+function rommLocalSet(id, file) { const m = rommLocalGet(); m[id] = file; try { fs.writeFileSync(rommLocalFile(), JSON.stringify(m)); } catch {} }
+async function rommLoad() { if (!rommOn()) { rommLib = null; return null; } try { rommLib = await romm.cached(); } catch { rommLib = null; } return rommLib; }
+// this console's RomM games not already on the shelf (by place, by where a download went, or by title)
+function rommGames(sysId, local) {
+  const L = (rommOn() && cfg.romm.cloud !== false && rommLib && rommLib.consoles && rommLib.consoles[sysId]) || []; if (!L.length) return [];
+  const dir = rommDir(sysId), have = new Set(local.map(g => String(g.file || '').toLowerCase())), titles = new Set(local.map(g => String(g.title || '').toLowerCase())), done = rommLocalGet(), out = [];
+  for (const r of L) {
+    const file = path.join(dir, rommSafe(r.file || r.title)), got = done[r.rommId];
+    if (have.has(file.toLowerCase()) || (got && have.has(String(got).toLowerCase())) || titles.has(String(r.title || '').toLowerCase())) continue;
+    // downloaded already, somewhere the scan doesn't look (a console with no games folder: Boxshelf's own RomM folder):
+    // shown as the game on this PC, not with the cloud
+    const here = got && paths.isFile(got) ? got : null, f = here || file;
+    out.push({ kind: 'rom', id: sysId + ':' + f, title: r.title, file: f, ext: path.extname(f).slice(1).toLowerCase(), sizeBytes: r.size || null, added: Date.parse(r.updatedAt || '') || 0,
+      info: covers.gameInfo(sysId, r.title) || { summary: r.summary || undefined, released: r.released || undefined, genres: r.genres || undefined },
+      art: { front: r.cover ? fileUrl(r.cover) : null }, romm: { id: r.rommId, size: r.size || null, multi: !!r.multi, cloud: !here } });
+  }
+  return out;
+}
+// a background sync (the saved copy shows meanwhile); a change refreshes the shelf. Never two at once
+function rommSync(delayMs = 0) {
+  if (rommSyncing || !rommOn()) return rommSyncing;
+  rommSyncing = new Promise(r => setTimeout(r, delayMs)).then(async () => {
+    const before = rommLib ? rommLib.count : -1, lib = await romm.library({}); if (!lib || !lib.consoles) return lib; rommLib = lib;
+    const cv = await romm.covers(Object.values(lib.consoles).flat(), { max: 500 }).catch(() => null); if (cv && cv.downloaded) rommLib = await romm.cached().catch(() => rommLib);
+    if (alive() && (lib.fetched || lib.removed || (cv && cv.downloaded) || before !== lib.count)) win.webContents.send('library:changed', { romm: 1 });
+    log('RomM sync:', lib.count, 'games', lib.offline ? '(offline: the saved copy)' : '', lib.skipped && lib.skipped.platforms ? `(${lib.skipped.platforms} platforms Boxshelf has no shelf for)` : ''); return lib;
+  }).catch(e => { log('RomM sync', e.message); return null; }).finally(() => { rommSyncing = null; });
+  return rommSyncing;
+}
+// Play on a RomM game not downloaded yet: downloaded into its console's folder first (→ the file to start)
+async function rommFetch(sysId, file) {
+  const lo = String(file).toLowerCase(), L = (rommLib && rommLib.consoles && rommLib.consoles[sysId]) || [], dir = rommDir(sysId);
+  const r = L.find(x => path.join(dir, rommSafe(x.file || x.title)).toLowerCase() === lo); if (!r) return null;
+  const got = rommLocalGet()[r.rommId]; if (got && paths.isFile(got)) return got;
+  const say = t => { if (alive()) win.webContents.send('launch:status', t); };
+  const mb = n => n >= 1e9 ? (n / 1e9).toFixed(1) + ' GB' : Math.max(1, Math.round(n / 1e6)) + ' MB';
+  say('Getting it from RomM…'); const ctl = new AbortController(); rommDl = ctl;
+  try {
+    await fs.promises.mkdir(dir, { recursive: true });
+    const res = await romm.download(r, dir, { signal: ctl.signal, onProgress: p => { if (p && p.phase === 'download' && p.total) say(`Getting it from RomM… ${Math.floor(100 * p.received / p.total)}% of ${mb(p.total)}`); else if (p && p.phase === 'extract') say('Unpacking it…'); } });
+    const f = res && (res.file || res.zip); if (!f || !paths.isFile(f)) throw new Error("RomM's download didn't give a game file.");
+    if (res.zip && res.extracted === false) throw new Error(`${r.title} came as a zip Boxshelf couldn't unpack. It's in ${dir}.`);
+    rommLocalSet(r.rommId, f); log('RomM download:', r.title, res.resumed ? '(resumed)' : '', res.verified ? '(checked)' : ''); return f;
+  } catch (e) {
+    const why = { aborted: 'Download stopped. Press Play again to carry on from where it was.', 'hash-mismatch': "The download didn't match RomM's copy (checked and removed). Press Play to try again.", auth: 'RomM turned Boxshelf away: pair it again in Settings → Accounts & services → RomM.', 'not-found': "RomM doesn't have that game any more.", 'no-space': 'Not enough free space for it on this drive.', offline: "RomM can't be reached right now." }[e && e.code];
+    throw new Error(why || ('RomM: ' + (e && e.message || e)));
+  } finally { if (rommDl === ctl) rommDl = null; }
+}
+handle('romm:cancel', () => { if (rommDl) { rommDl.abort(); return true; } return false; });
+handle('romm:status', async () => ({ ...romm.status(), server: (cfg.romm || {}).server || '', paired: rommOn(), count: rommLib ? rommLib.count : null, at: rommLib ? rommLib.at : null, offline: !!(rommLib && rommLib.offline), skipped: rommLib ? rommLib.skipped : null }));
+const rommSaveToken = t => { cfg = persistCfg(config.normalize({ ...cfg, keys: { ...cfg.keys, rommToken: String(t || ''), rommTokenServer: t ? romm.originOf(cfg.romm && cfg.romm.server) : '' } })); rommApply(); };
+handle('romm:pairStart', async () => { rommApply(); const r = await romm.pairStart(); if (r && r.qrUrl) { try { r.qr = companion.qrSvg(r.qrUrl); } catch {} } return r; }); // (the QR drawn here, as the phone companion's)
+handle('romm:pairPoll', async () => { const r = await romm.pairPoll(); if (r && r.state === 'ok' && r.token) { rommSaveToken(r.token); rommLoad().then(() => rommSync(0)); delete r.token; } return r; });
+handle('romm:pairCancel', () => { romm.pairCancel(); return true; });
+handle('romm:pairCode', async ({ code } = {}) => { rommApply(); const r = await romm.pairWithCode(String(code || '').replace(/\D/g, '').slice(0, 12)); if (r && r.token) { rommSaveToken(r.token); rommLoad().then(() => rommSync(0)); return { ok: true }; } return { ok: false, error: (r && r.error) || 'not accepted' }; });
+handle('romm:test', async () => { rommApply(); return romm.test(); });
+handle('romm:sync', async () => { const r = await rommSync(0); return r ? { ok: !r.error, count: r.count, offline: !!r.offline, error: r.error || null } : { ok: false, error: rommOn() ? 'busy' : 'not paired' }; });
+handle('romm:forget', async () => { await romm.forget().catch(() => {}); rommLib = null; rommSaveToken(''); if (alive()) win.webContents.send('library:changed', { romm: 1 }); return true; });
+// (beta.12) Close Steam, from the card after a Steam game when Steam still holds the controller: Steam's own exit link,
+// so it closes the way its menu would (not while a game Boxshelf watches is still running)
+handle('steam:exit', async () => { if (launcher.isRunning()) throw new Error('A game is still running.'); await shell.openExternal('steam://exit'); log('Steam: asked to close (it was holding the controller)'); return true; });
+// Settings → Consoles: RocketLauncher found on this PC (its path, or ''), and its systems with the name each console
+// would use (no ROM paths go to the page: a count only)
+handle('rocket:find', async () => process.platform === 'win32' ? rocket.find() : '');
+handle('rocket:systems', async ({ exe } = {}) => {
+  const e = String(exe || (cfg.rocket && cfg.rocket.exe) || ''); if (process.platform !== 'win32' || !e || !paths.isFile(e)) return { list: [], names: {} };
+  const list = await rocket.systems(e, true), names = {};
+  for (const c of CONSOLES) { const n = rocket.nameFor(c.id, list); const s = list.find(x => x.name === n); names[c.id] = { name: n, known: !!s, ready: s ? s.ready : false, folders: s ? s.romPaths.length : 0,
+    matches: !!(s && (((cfg.systems[c.id] || {}).romDirs) || []).some(d => s.romPaths.some(p => path.resolve(p).toLowerCase() === path.resolve(emuPath(d) || d).toLowerCase()))) }; }
+  return { list: list.map(s => ({ name: s.name, ready: s.ready })), names };
+});
 // (busy check first: a .cia still installing, or a game running, must not have its emulator's settings rewritten under it)
 const busyCheck = () => { if (launching || launcher.isRunning()) throw new Error(launcher.busyMessage()); }; // (beta.10: names what's running)
 // (beta.10) a game's title for that message: the shelf's (the last scan), else its file or folder name, never a path
@@ -1537,12 +1785,28 @@ handle('launch:app', async ({ appId, link }) => {
   const cover = coverWhileStarting(a.fullscreen === false ? 4 : (+a.coverSeconds || 15));
   return { ...r, cover };
 });
-handle('launch:steam', ({ appid }) => launcher.launchSteam(appid));
+// (beta.12) Seamless play on: the Steam game is watched (main/seamless.js: the loading cover, Home menu, playtime and the
+// return to the shelf); off: handed to Steam as before
+handle('launch:steam', ({ appid }) => {
+  // (beta.12, Linux) watched there too (main/gamewatch.js reads /proc): playtime, the shelf hidden while it runs and back
+  // after, and the View + Menu hold closes it
+  if (linux.isLinux && /^\d{1,10}$/.test(String(appid))) { const r = seamless.launchWatched({ kind: 'steam', id: 'steam-' + appid, appid: String(appid), dir: gamewatch.steamInstallDir([steamMain, cfg.steam.path], appid), title: pcTitleOf('steam-' + appid, 'Steam game'), systemName: 'Steam', start: () => launcher.launchSteam(appid) });
+    return Promise.resolve(r).then(x => { if (launcher.isRunning()) linuxpad.begin(() => closeGame()); return x; }); } /* (its playtime: launchWatched's 'started') */
+  if (seamless.on() && /^\d{1,10}$/.test(String(appid))) return seamless.launchWatched({ kind: 'steam', id: 'steam-' + appid, appid: String(appid), dir: gamewatch.steamInstallDir([steamMain, cfg.steam.path], appid), title: pcTitleOf('steam-' + appid, 'Steam game'), systemName: 'Steam', start: () => launcher.launchSteam(appid) });
+  return launcher.launchSteam(appid);
+});
+// (beta.12) a PC game's title from the last scan (for the log and the Home menu; never a path)
+function pcTitleOf(id, def) { try { for (const s of lastLib || []) { const g = (s.games || []).find(x => x.id === id); if (g && g.title) return String(g.title).slice(0, 120); } } catch {} return def; }
+const STORE_NAME = { epic: 'Epic Games', ubisoft: 'Ubisoft', ea: 'EA', xbox: 'Xbox', gog: 'GOG' };
 // (beta.4) a PC game that isn't Steam's, named by id only: Epic's go through its launcher's link; Quiver's and the ones
 // added by hand start their own program in its own folder (recomps read their files from there), with the Home menu and
 // the quit buttons like any app
 handle('launch:pc', async ({ id }) => {
   const g = pcgames.byId(id); if (!g) throw new Error("That game isn't on the shelf any more. The shelf is refreshing; try again in a moment.");
+  // (beta.12) Seamless play on: a store game (Epic, Ubisoft, EA, Xbox) is still started through its store, and watched
+  if (seamless.on() && ((g.uri && /^(com\.epicgames\.launcher|uplay|origin2):\/\//i.test(g.uri)) || (g.shellApp && /^[\w.-]+_[a-z0-9]+![\w.-]+$/i.test(g.shellApp))))
+    return seamless.launchWatched({ kind: g.source, id: g.id, dir: g.dir || '', exe: g.exe || '', title: g.title, systemName: STORE_NAME[g.source] || 'PC',
+      start: () => { if (g.uri) return shell.openExternal(g.uri); const p = spawn('explorer.exe', ['shell:AppsFolder\\' + g.shellApp], { detached: true, stdio: 'ignore' }); p.on('error', e => log('Xbox launch', e.message)); p.unref(); } });
   // through its store's launcher (Epic, and from beta.7 Ubisoft Connect and the EA app: their sign-in, cloud saves, overlay)
   if (g.uri && /^(com\.epicgames\.launcher|uplay|origin2):\/\//i.test(g.uri)) { busyCheck(); log('PC launch:', g.source, g.title); return shell.openExternal(g.uri).then(() => ({ external: true })); }
   // (beta.7) an Xbox / Game Pass game is a Windows app: started as one (its package family and app id, from pcgames.xboxGames)
@@ -1553,6 +1817,7 @@ handle('launch:pc', async ({ id }) => {
   launching = true; try { await taskbarHide(); } finally { launching = false; } // (beta.6)
   let r; try { r = launcher.launchApp(g.exe, onExit, launcher.buildArgs(g.args || '', '')); } catch (e) { taskbarShow('the game did not start'); throw e; } runKind = 'app'; pendingPower = null; launcher.setRunningName(g.title); log('PC launch:', g.source, g.title);
   if (cfg.ui.homeMenu !== false) homemenu.begin({ systemId: 'pc', exe: g.exe, systemName: g.source === 'quiver' ? 'Quiver' : g.source === 'gog' ? 'GOG' : 'Custom', title: g.title, hotkeys: {} });
+  if (seamless.on()) historyTrack(g.id); // (beta.12, Seamless play: its playtime too)
   watchPad({ mouse: false, appPid: r.pid, fullscreenKey: null, home: true });
   return { ...r, cover: coverWhileStarting(10) };
 });
@@ -1560,18 +1825,22 @@ handle('launch:pc', async ({ id }) => {
 const pcLookup = id => { id = String(id || ''); const m = /^steam-(\d{1,10})$/.exec(id); if (m) return { id, appid: m[1], title: '' }; const g = pcgames.byId(id); return g ? { id, title: g.title } : null; };
 const pcGameOf = id => { const g = pcLookup(id); if (!g) throw new Error("That game isn't on the shelf any more."); return g; };
 let pcCoverT = 0; // (beta.9: one shelf refresh for a run of covers, not one per cover)
-const pcCoverChanged = () => { clearTimeout(pcCoverT); pcCoverT = setTimeout(() => { if (alive()) win.webContents.send('library:changed', { pcCover: 1 }); }, 700); };
+// (beta.12) a chosen cover gets a new address each time (the same file name used to give the same bsfile:// address, so
+// a second pick showed the old picture from the cache and the shelf saw nothing new), and the shelf's rescan is a fresh
+// one: a scan already running may have read the covers before this one was saved
+const pcCoverBump = id => { const f = id && pccovers.cover(id); if (f) artVer.set(path.resolve(f).toLowerCase(), Date.now()); };
+const pcCoverChanged = id => { pcCoverBump(id); scanCfg = null; clearTimeout(pcCoverT); pcCoverT = setTimeout(() => { if (alive()) win.webContents.send('library:changed', { pcCover: 1 }); }, 700); };
 // (beta.9) the games that never get an automatic cover (Quiver's, and programs added by hand or from Playnite: their
 // names often match an unrelated game) and have none chosen yet: the batch cover finder's list
 handle('pccover:missing', () => pcgames.all().filter(g => (g.source === 'custom' || g.source === 'quiver') && !pccovers.cover(g.id)).map(g => ({ id: g.id, title: g.title, source: g.source })));
 handle('pccover:options', ({ id, term }) => { const g = pcGameOf(id), t = String(term || '').replace(/\s+/g, ' ').trim().slice(0, 120);
   return pccovers.options(t ? { id: g.id, title: t, term: true } : g); }); // (beta.5: term = Search by name, a title instead of the game's own / its Steam app)
-handle('pccover:use', async ({ id, key }) => { pcGameOf(id); await pccovers.use(id, key); pcCoverChanged(); return { ok: true }; });
+handle('pccover:use', async ({ id, key }) => { pcGameOf(id); await pccovers.use(id, key); pcCoverChanged(id); return { ok: true }; });
 handle('pccover:own', async ({ id }) => {
   pcGameOf(id);
-  const r = await dialog.showOpenDialog(alive() ? win : undefined, { title: 'Choose a cover', properties: ['openFile'], filters: [{ name: 'Pictures', extensions: ['jpg', 'jpeg', 'png', 'webp'] }] });
+  const r = await openDialog(alive() ? win : undefined, { title: 'Choose a cover', properties: ['openFile'], filters: [{ name: 'Pictures', extensions: ['jpg', 'jpeg', 'png', 'webp'] }] });
   if (r.canceled || !r.filePaths || !r.filePaths[0]) return { ok: false, canceled: true };
-  await pccovers.own(id, r.filePaths[0]); pcCoverChanged(); return { ok: true };
+  await pccovers.own(id, r.filePaths[0]); pcCoverChanged(id); return { ok: true };
 });
 handle('pccover:reset', ({ id }) => { pcGameOf(id); pccovers.reset(id); pcCoverChanged(); return { ok: true }; });
 // (beta.5) Details → Rename: a console game by its console and file (it must be one the scanner could find), a PC game by
@@ -1588,6 +1857,16 @@ handle('game:rename', ({ systemId, file, id, title }) => {
   applyCfg({ ...cfg, games }); log('Game renamed:', key.split(':')[0], t ? 'to a name of its own' : 'back to its file name');
   if (systemId) { try { artstudio.forget(systemId); } catch {} }
   return { ok: true, title: t };
+});
+// (beta.12) Details → Your play → Status: where the player is with a game, in their own words (kept per game id beside its
+// own emulator and name, so the shelf can sort and filter by it later). '' clears it.
+handle('game:status', ({ id, status }) => {
+  const key = String(id == null ? '' : id).slice(0, 2048); if (!key) throw new Error('No game.');
+  const s = config.GAME_STATUS.includes(status) ? status : '';
+  const games = { ...(cfg.games || {}) }, cur = { ...(games[key] || {}) };
+  if (s) cur.status = s; else delete cur.status;
+  if (Object.keys(cur).length) games[key] = cur; else delete games[key];
+  applyCfg({ ...cfg, games }); return { ok: true, games: cfg.games };
 });
 handle('pc:status', async () => { const pc = cfg.pc || {}; let epic = null; try { epic = pcgames.epicGames().length; } catch {}
   // (beta.7) each store's installed games, counted whether its switch is on or not (Settings says what it would add)
@@ -1799,6 +2078,9 @@ handle('manuals:recent', () => manualcoll.recent(30));
 handle('manuals:coverage', async () => { const out = []; for (const s of sysList(CONSOLES.map(c => c.id))) { await yieldNow(); out.push(...(await manuals.coverage([s]))); } return out; }); // (beta.9: a console at a time, as covers:coverage; beta.10: coverage is async)
 handle('manuals:find', async ({ systemIds }) => {
   systemIds = idList(systemIds);
+  // a second search while one runs is turned down before it takes the token: it used to replace it and then clear it,
+  // so Cancel could no longer stop the first
+  if (findToken) throw new Error('Already searching for manuals.');
   // (beta.10) the token is made before waiting for the background pass (a Cancel meanwhile was lost), and that pass is asked
   // to stop at its next step (manualUser, as a Wrong game / Repair press does); it carries on afterwards
   const token = findToken = { cancelled: false };
@@ -1830,12 +2112,32 @@ function psRun(script) {
   });
 }
 const loginItem = () => ({ path: process.env.PORTABLE_EXECUTABLE_FILE || process.execPath, args: WINDOWED ? ['--windowed'] : [] });
+// (beta.12) Linux: start at login through the desktop's autostart folder (~/.config/autostart, the XDG way KDE's Desktop
+// Mode and GNOME read), pointing at the AppImage. Game Mode on a Steam Deck starts Steam, not this: there Boxshelf is
+// started from the Library (Add to Steam)
+const LINUX_AUTOSTART = () => path.join(process.env.XDG_CONFIG_HOME || path.join(require('os').homedir(), '.config'), 'autostart', 'boxshelf.desktop');
+// (a .desktop Exec value: inside the quotes ", `, $ and \ take a backslash, then backslashes are doubled again and % doubled)
+const desktopQuote = s => '"' + String(s).replace(/(["`$\\])/g, '\\$1').replace(/\\/g, '\\\\').replace(/%/g, '%%') + '"';
+const linuxAutostartText = exe => ['[Desktop Entry]', 'Type=Application', 'Name=Boxshelf', 'Comment=Your games on a shelf', 'Exec=' + desktopQuote(exe), 'Terminal=false', 'X-GNOME-Autostart-enabled=true', ''].join('\n');
+// (beta.12) at start: the fixed link follows this AppImage, and a Start at login entry from an older version (its own
+// file name) is pointed at the link
+if (process.platform === 'linux') app.whenReady().then(() => { try { const exe = linux.stableAppImage(); const f = LINUX_AUTOSTART(); if (exe && fs.existsSync(f)) { const want = linuxAutostartText(exe); if (fs.readFileSync(f, 'utf8') !== want) { fs.writeFileSync(f + '.tmp', want); fs.renameSync(f + '.tmp', f); log('Start at login: pointed at', exe === process.env.APPIMAGE ? 'this AppImage' : 'Boxshelf.AppImage'); } } } catch (e) { log('Start at login: not refreshed:', e.message); } });
 handle('autostart:get', () => {
+  if (process.platform === 'linux') return { enabled: fs.existsSync(LINUX_AUTOSTART()), how: 'desktop' };
   if (process.platform !== 'win32') return { enabled: false, how: 'unsupported' };
   if (app.isPackaged) return { enabled: !!app.getLoginItemSettings(loginItem()).openAtLogin, how: 'exe' };
   return { enabled: fs.existsSync(STARTUP_LNK()), how: 'shortcut' };
 });
 handle('autostart:set', async ({ enabled }) => {
+  if (process.platform === 'linux') {
+    const f = LINUX_AUTOSTART();
+    if (!enabled) { try { fs.unlinkSync(f); } catch {} return { enabled: false, how: 'desktop' }; }
+    const exe = linux.stableAppImage() || process.env.APPIMAGE; if (!exe) throw new Error('Start at login needs the AppImage version of Boxshelf.');
+    fs.mkdirSync(path.dirname(f), { recursive: true });
+    const text = linuxAutostartText(exe);
+    fs.writeFileSync(f + '.tmp', text); fs.renameSync(f + '.tmp', f);
+    return { enabled: true, how: 'desktop' };
+  }
   if (process.platform !== 'win32') throw new Error('Only on Windows.');
   // the exe: Windows' own start-up entry; a shortcut left by the folder version is removed so only one Boxshelf starts
   if (app.isPackaged) { try { fs.unlinkSync(STARTUP_LNK()); } catch {} app.setLoginItemSettings({ openAtLogin: !!enabled, ...loginItem() }); return { enabled: !!enabled, how: 'exe' }; }
@@ -1918,8 +2220,19 @@ handle('ytclip:status', () => ytclips.status());
 handle('ytclip:helper', async () => { const ok = await ytclips.getHelper(p => { if (alive()) win.webContents.send('ytclip:progress', { pct: p }); }); if (alive()) win.webContents.send('ytclip:progress', { done: true, ok }); return ok; });
 handle('ytclip:clear', () => { ytclips.clear(); return true; });
 // (beta.8) Steam Deck: where Boxshelf runs (the shelf's Desktop Mode card, Settings), and Add Boxshelf to Steam
-handle('deck:info', () => ({ ...steamdeck.info(), inSteam: linux.isLinux && process.env.APPIMAGE ? steamdeck.inSteam(process.env.APPIMAGE) : false }));
-handle('deck:addToSteam', ({ closeSteam } = {}) => steamdeck.addToSteam({ exe: process.env.APPIMAGE || '', iconSrc: path.join(__dirname, 'renderer', 'app-icon.png'), dataDir: app.getPath('userData'), closeSteam: !!closeSteam }));
+handle('deck:info', () => ({ ...steamdeck.info(), inSteam: linux.isLinux && process.env.APPIMAGE ? steamdeck.inSteam(linux.stableAppImage() || process.env.APPIMAGE) : false }));
+// (beta.12) the shortcut points at the fixed Boxshelf.AppImage link, so it keeps working after an update
+handle('deck:addToSteam', ({ closeSteam } = {}) => steamdeck.addToSteam({ exe: linux.stableAppImage() || process.env.APPIMAGE || '', iconSrc: path.join(__dirname, 'renderer', 'app-icon.png'), dataDir: app.getPath('userData'), closeSteam: !!closeSteam }));
+// (beta.12) Details' box: the sound of the clip that's playing, by the clip's own address: { clip: false } for anything but
+// Boxshelf's own YouTube clips (their sound is in the video), else { clip: true, url } (url null: it couldn't be had).
+// Kept the first time, so it plays at once after that
+handle('preview:clipAudio', async ({ url } = {}) => {
+  const u = String(url || ''); if (!u.startsWith('bsfile://local/')) return null;
+  let f; try { f = decodeURIComponent(u.slice(15).split('?')[0]); } catch { return null; }
+  const st = previews.steamIdOf(f); if (st) { const a = await previews.steamAudio(st); return { clip: true, url: a ? fileUrl(a) : null }; } // (Steam clips are the picture only too: their sound is fetched the same way)
+  const id = ytclips.idOfClip(f); if (!id) return { clip: false }; // (your own video: its sound is in it)
+  const a = await ytclips.audio(id); return { clip: true, url: a ? fileUrl(a) : null };
+});
 handle('preview:yt', ({ id, rect, muted }) => {
   if (!alive() || !/^[\w-]{6,20}$/.test(String(id || '')) || !rect) return false;
   const v = ytEnsure(); ytWant = id; v.setBounds(ytBounds(rect)); v.setVisible(true);
@@ -2019,6 +2332,7 @@ handle('manuals:cancel', () => { if (findToken) findToken.cancelled = true; retu
 handle('manuals:download', async ({ choices }) => {
   // every target must be a game the scanner could have found (inside that system's games folders)
   choices = (Array.isArray(choices) ? choices : []).filter(c => { try { return c && typeof c.id === 'string' && !!gameFile(c.systemId, c.file); } catch { return false; } });
+  if (findToken) throw new Error('Already downloading manuals.'); // (the background pass doesn't take the token: it's waited for below)
   const token = findToken = { cancelled: false }; // (beta.10: as manuals:find, a Cancel while the background pass stops isn't lost)
   try {
   await manualBgWait();
@@ -2118,7 +2432,7 @@ handle('art:choose', async ({ id }) => {
   const m = /^([a-z0-9]+):(.+)$/i.exec(String(id || '')), def = m && CONSOLES.find(c => c.id === m[1]), sc = def && cfg.systems[def.id];
   if (!def || !sc) throw new Error('Box art can only be changed for console games.');
   const file = gameFile(def.id, m[2]).file; // a game the scanner could have found: the art can't be written (or old art moved) anywhere else
-  const r = await dialog.showOpenDialog(alive() ? win : undefined, { title: 'Choose box art', properties: ['openFile'], filters: [{ name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'webp'] }] });
+  const r = await openDialog(alive() ? win : undefined, { title: 'Choose box art', properties: ['openFile'], filters: [{ name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'webp'] }] });
   if (r.canceled || !r.filePaths || !r.filePaths[0]) return { ok: false, canceled: true };
   const src = r.filePaths[0], ext = path.extname(src).slice(1).toLowerCase();
   if (!['jpg', 'jpeg', 'png', 'webp'].includes(ext)) throw new Error('Pick a JPG, PNG or WebP image.');
@@ -2159,7 +2473,7 @@ function initArtStudio() {
     changed: info => { clearTimeout(artChangedT); artChangedT = setTimeout(() => { if (alive()) win.webContents.send('library:changed', { artStudio: 1, ...info }); }, 300); },
     idle: gameIdle, coversBusy: () => { if (coversBusy && autoState && autoState.paused) autoPause(false); return coversBusy; }, // (beta.10: the Studio waiting on a paused background run carries it on)
     // "Use my own picture…": main opens the picker; the screen never sends a path
-    pickImage: async ({ title }) => { const r = await dialog.showOpenDialog(alive() ? win : undefined, { title, properties: ['openFile'], filters: [{ name: 'Pictures', extensions: ['png', 'jpg', 'jpeg', 'webp'] }] }); return r.canceled || !r.filePaths || !r.filePaths[0] ? null : r.filePaths[0]; } });
+    pickImage: async ({ title }) => { const r = await openDialog(alive() ? win : undefined, { title, properties: ['openFile'], filters: [{ name: 'Pictures', extensions: ['png', 'jpg', 'jpeg', 'webp'] }] }); return r.canceled || !r.filePaths || !r.filePaths[0] ? null : r.filePaths[0]; } });
 }
 handle('art:studio', () => artstudio.studio());
 handle('art:games', async a => { const t0 = Date.now(), r = await artstudio.games(a), ms = Date.now() - t0; if (ms > 3000) log('Art games list slow:', a && a.systemId, ms, 'ms'); return r; }); // (beta.3: a report of the page stuck on "Loading…")
@@ -2190,7 +2504,7 @@ function initManualStudio() {
     renderPdf: p => renderPdfPages(p, 1600), renderFirst: async p => { const d = (await renderPdfCover(p))[0]; const m = /^data:image\/jpeg;base64,(.+)$/.exec(String(d || '')); return m ? Buffer.from(m[1], 'base64') : null; },
     crop: makeCropper(),
     // "My PDF…": main opens the picker; the screen never sends a path
-    pickPdf: async ({ title }) => { const r = await dialog.showOpenDialog(alive() ? win : undefined, { title, properties: ['openFile'], filters: [{ name: 'PDF manuals', extensions: ['pdf'] }] }); return r.canceled || !r.filePaths || !r.filePaths[0] ? null : r.filePaths[0]; } });
+    pickPdf: async ({ title }) => { const r = await openDialog(alive() ? win : undefined, { title, properties: ['openFile'], filters: [{ name: 'PDF manuals', extensions: ['pdf'] }] }); return r.canceled || !r.filePaths || !r.filePaths[0] ? null : r.filePaths[0]; } });
 }
 handle('manual:studio', () => manualstudio.studio());
 handle('manual:games', a => manualstudio.games(a));
@@ -2211,7 +2525,10 @@ handle('app:winMode', async ({ mode } = {}) => {
     if (mode === 'max') win.maximize(); else { if (win.isMaximized()) win.unmaximize(); const a = screen.getDisplayMatching(win.getBounds()).workArea; win.setBounds({ x: a.x + Math.round(a.width / 4), y: a.y + Math.round(a.height / 4), width: Math.round(a.width / 2), height: Math.round(a.height / 2) }); } }
   return win.isFullScreen();
 });
-handle('app:fullscreen', () => { if (alive()) win.setFullScreen(!win.isFullScreen()); return alive() && win.isFullScreen(); });
+handle('app:fullscreen', () => { if (alive()) { const to = !win.isFullScreen(); win.setFullScreen(to); seamless.fullscreenToggled(to); /* (beta.12: F11 sets Seamless play's screen mode) */ } return alive() && win.isFullScreen(); });
+// (beta.12) Seamless play: Settings → Screen mode, and B on the starting screen of a watched game (main/seamless.js)
+handle('seamless:screenMode', ({ mode } = {}) => seamless.setScreenMode(alive() ? win : null, String(mode || ''), launcher.isRunning()));
+handle('seamless:cancel', () => seamless.cancel(launcher));
 
 // The RetroAchievements key is kept encrypted for this Windows user (DPAPI via safeStorage), not as plain text in
 // config.json: a copied or shared Boxshelf folder doesn't carry a usable key
@@ -2245,6 +2562,8 @@ function persistCfg(next) { config.save(sealed(next)); return next; }
 // What changed in a save that main has to act on: the display, Steam's tools, the accounts (re-checked on their own)
 function cfgChanged(prev, next) {
   if (!prev || !next) return;
+  // (beta.12) RomM's address or its settings changed: used from now on, its library read again on the next build
+  if (JSON.stringify(prev.romm || {}) !== JSON.stringify(next.romm || {})) { rommApply(); rommLib = null; rommSyncedOnce = false; }
   const pu = prev.ui || {}, nu = next.ui || {};
   if (nu.display && nu.display !== pu.display) setTimeout(() => { try { moveToDisplay(nu.display); } catch (e) { log('display move', e.message); } }, 0);
   if ((prev.steam && prev.steam.hideTools !== false) !== (next.steam && next.steam.hideTools !== false) && alive()) win.webContents.send('library:changed', { steam: 1 });
@@ -2321,7 +2640,7 @@ handle('settings:backup', async () => {
   let dir; try { dir = app.getPath('documents'); } catch { dir = require('os').homedir(); }
   const r = await dialog.showSaveDialog(alive() ? win : undefined, { title: 'Back up Boxshelf settings', defaultPath: freeName(dir, `Boxshelf settings ${stamp()}`, '.json'), filters: [{ name: 'Boxshelf settings', extensions: ['json'] }] });
   if (!r || r.canceled || !r.filePath) return { ok: false, canceled: true };
-  const h = loadHistory(), hist = {}; for (const [k, v] of Object.entries(h)) hist[k] = { count: v.count, ms: v.ms, last: v.last };
+  const h = loadHistory(), hist = {}; for (const [k, v] of Object.entries(h)) hist[k] = { count: v.count, ms: v.ms, last: v.last, ...(v.first ? { first: v.first } : {}), ...(v.long ? { long: v.long } : {}) };
   const data = { app: 'Boxshelf', version: app.getVersion(), backup: BACKUP_V, at: new Date().toISOString(), config: stripSecrets(cfg), history: hist };
   try { await fs.promises.writeFile(r.filePath + '.tmp', JSON.stringify(data, null, 1)); await fs.promises.rename(r.filePath + '.tmp', r.filePath); }
   catch (e) { try { await fs.promises.unlink(r.filePath + '.tmp'); } catch {} log('settings backup failed', e.message); return { ok: false, error: e.message }; }
@@ -2345,12 +2664,13 @@ function restoredConfig(cur, b) {
 }
 // play history: per game the larger count / time and the later date, so nothing played since the backup is lost
 function mergeHistory(h, add) {
-  let n = 0; for (const [k0, v] of Object.entries(add || {})) { if (!isPlain(v)) continue; const k = String(k0).slice(0, 1024), e = h[k] || { count: 0, ms: 0, last: 0 };
-    h[k] = { count: Math.max(e.count, Math.max(0, +v.count || 0)), ms: Math.max(e.ms, Math.max(0, +v.ms || 0)), last: Math.max(e.last, Math.max(0, +v.last || 0)) }; n++; }
+  let n = 0; for (const [k0, v] of Object.entries(add || {})) { if (!isPlain(v) || k0 === '__proto__' || k0 === 'constructor' || k0 === 'prototype') continue; const k = String(k0).slice(0, 1024), e = (Object.prototype.hasOwnProperty.call(h, k) && h[k]) || { count: 0, ms: 0, last: 0 }; /* (beta.12: a restored backup can't reach the object's prototype) */
+    h[k] = { ...e, count: Math.max(e.count, Math.max(0, +v.count || 0)), ms: Math.max(e.ms, Math.max(0, +v.ms || 0)), last: Math.max(e.last, Math.max(0, +v.last || 0)) }; /* (beta.12: this game's own sessions stay; the earlier first played and the longer session win) */
+    if (+v.first > 0 && (!e.first || +v.first < e.first)) h[k].first = +v.first; if (+v.long > (e.long || 0)) h[k].long = +v.long; n++; }
   return n;
 }
 handle('settings:restore', async () => {
-  const r = await dialog.showOpenDialog(alive() ? win : undefined, { title: 'Restore Boxshelf settings', properties: ['openFile'], filters: [{ name: 'Boxshelf settings', extensions: ['json'] }] });
+  const r = await openDialog(alive() ? win : undefined, { title: 'Restore Boxshelf settings', properties: ['openFile'], filters: [{ name: 'Boxshelf settings', extensions: ['json'] }] });
   if (!r || r.canceled || !r.filePaths || !r.filePaths[0]) return { ok: false, canceled: true };
   let b; try { const st = await fs.promises.stat(r.filePaths[0]); if (st.size > 32 * 1024 * 1024) return { ok: false, error: 'That file is too big to be a settings backup.' }; b = JSON.parse(await fs.promises.readFile(r.filePaths[0], 'utf8')); }
   catch (e) { return { ok: false, error: 'That file couldn\'t be read as a settings backup.' }; }
@@ -2513,6 +2833,10 @@ function startUp() {
   arcadenames.init(app.getPath('userData'), log); // (beta.7) arcade game names, main/arcadenames.js
   emusetup.init({ log, dataDir: app.getPath('userData'), appRoot: paths.appRoot() }); racores.init({ log }); previews.init({ log, dataDir: app.getPath('userData'), appRoot: paths.appRoot() }); ytclips.init({ log, dataDir: app.getPath('userData') }); addgames.init({ log });
   cfg = unsealed(config.load()); { const fx = fixXenia(cfg); if (fx !== cfg) { cfg = fx; try { persistCfg(cfg); } catch {} } } applyArtLibrary();
+  // (beta.12) a Steam Deck's 7" 1280x800 screen: TV-sized labels came out ~1.4 mm, and the automatic scale (by height, 800)
+  // stays at 1. Once (deckScaled), Interface size starts at 115%; a size chosen in Settings later is never changed again
+  if (linux.isLinux && steamdeck.info().deck && !cfg.ui.deckScaled) { cfg = { ...cfg, ui: { ...cfg.ui, uiScale: Math.max(1.15, +cfg.ui.uiScale || 1), deckScaled: true } }; try { persistCfg(cfg); log('Steam Deck: Interface size starts at', cfg.ui.uiScale); } catch {} }
+  romm.init({ dataDir: app.getPath('userData'), log: (...a) => log(...a) }); rommApply(); // (beta.12) RomM: its saved library and covers live in the data folder
   { const here = paths.appRoot(), L = Array.isArray(cfg.ui.installs) ? cfg.ui.installs.filter(x => typeof x === 'string') : []; if (!L.some(x => x.toLowerCase() === here.toLowerCase())) { cfg.ui.installs = [here, ...L].slice(0, 6); try { persistCfg(cfg); } catch {} } } // where Boxshelf has run from: a later move can offer the magazines left here
   // consoles added in an update (PS5): found once, as setup would have (an emulator or games folder set by hand is kept)
   { const known = Array.isArray(cfg.ui.knownSystems) ? cfg.ui.knownSystems : [], add = ['ps5', 'sw2'].filter(id => !known.includes(id) && cfg.systems[id]);

@@ -44,6 +44,7 @@
 
   // ---------- state ----------
   let game = null, tab = 'case', idleT = 0, hintT = 0;
+  const stale = { more: true, trophies: true }; // (tabs out of sight that a newer game hasn't been painted into yet)
   let V = null; // the case on screen: { wrap, sway, spin, box, media, flat }
   let focus = false, zoom = 1; // Inspect's focus view, and how far two fingers have zoomed it
   const ZOOM = { min: 0.7, max: 2.1 }, FOCUS_Y = 226; // zoom limits; the middle of the whole screen (in the views' own coordinates)
@@ -51,16 +52,19 @@
   const REST = { ry: 30, rx: -7 }, FLAT = { ry: -12, rx: -3 }; // a flat card (an app) only leans a little
 
   // ---------- tabs ----------
-  const TABS = ['case', 'art', 'trophies', 'more']; // ('art' is the Box art button's place in the bar: it opens the Art Studio, never a page here)
+  const TABS = ['apps', 'case', 'trophies', 'sys', 'more']; // (beta.12: Apps first, then the Game tab, whose Box art sits under Play; Consoles and Apps are new)
   function setTab(t, quiet) {
     if (!TABS.includes(t)) t = 'case';
+    if (t === 'apps') askApps();
+    if (t === 'sys') paintSys();
     tab = t; store.set('tab', t);
     document.querySelectorAll('.tab').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
     $('tabs').style.setProperty('--i', TABS.indexOf(t));
     document.querySelectorAll('.view').forEach(v => v.classList.toggle('on', v.dataset.v === t));
     if (focus) exitFocus(true); else if (isOpen()) closeCase(true); // the Case tab always starts with the case closed, in its usual place
     if (t !== 'more' && scEdit) setEdit(false);
-    if (t === 'trophies') paintTrophies(true); // the ring fills each time it comes into view
+    if (t === 'more') { stale.more = false; paintMore(); } // (always: a shortcut held on the Apps tab, an icon that came in meanwhile)
+    if (t === 'trophies') { stale.trophies = false; paintTrophies(true); } // the ring fills each time it comes into view
     if (!quiet) poke();
   }
   $('tabs').addEventListener('click', e => { const b = e.target.closest('.tab'); if (b && b.dataset.tab) setTab(b.dataset.tab); });
@@ -69,6 +73,7 @@
   stage.addEventListener('click', e => {
     const b = e.target.closest('[data-cmd]'); if (!b || b.disabled) return;
     const c = b.dataset.cmd;
+    if (c === 'sleep') { sleep(true); return; } // (this screen's own: nothing for the shelf to do)
     if (c === 'fav' && game) { game.fav = !game.fav; paintFav(); } // answer the finger at once; the shelf's reply confirms it
     cmd(c);
   });
@@ -77,14 +82,32 @@
   function recv(m) {
     try { if (typeof m === 'string') m = JSON.parse(m); } catch { return; }
     if (!m || typeof m !== 'object') return;
-    if (m.type === 'game') { const back = leaveMuseum(); show(m.game || null, back); }
+    if (asleep && m.type !== 'scOpts') { keepAsleep(m); return; }
+    if (m.type === 'game') { const back = leaveMuseum(); if (Array.isArray(m.shelves)) { shelvesNow = m.shelves; if (tab === 'sys') paintSys(); } show(m.game || null, back); }
+    else if (m.type === 'ctx') showCtx(m.ctx || null);
+    else if (m.type === 'apps') recvApps(m);
+    else if (m.type === 'appIcons') recvIcons(m.icons);
     else if (m.type === 'museum') showMuseum(m);
     else if (m.type === 'studio') showStudio(m);
     else if (m.type === 'scOpts') recvOpts(m); // (0.3.5) the Shortcuts editor's Add list
+    else if (m.type === 'unlocks') { fresh = { list: Array.isArray(m.list) ? m.list : [], until: Date.now() + 90000 }; if (!isMuseum()) setTab('trophies', true); paintTrophies(true); } // (beta.12) just unlocked in the game you came back from
+  }
+  // (beta.12) the achievements unlocked in the last game: shown above the ring on the Trophies tab for a minute and a half
+  let fresh = null;
+  function freshHtml() {
+    if (!fresh || Date.now() > fresh.until || !fresh.list.length) return '';
+    const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+    return `<div class="just"><div class="just-h">Just unlocked</div>${fresh.list.map(a => `<div class="just-a">${a.badge ? `<img src="${esc(a.badge)}" alt="">` : '<span class="just-nob"></span>'}<div><b>${esc(a.title)}</b>${a.points ? `<small>${a.points} pts</small>` : ''}</div></div>`).join('')}</div>`;
   }
 
+  // (beta.12) games arriving close together (racing through a shelf up top): the cross-fades shrink to almost nothing for
+  // a moment (body.brisk), so this screen never spends a second fading whole-panel layers while the top screen slides
+  let lastShowAt = 0, briskT = 0;
+  function brisk() { const now = performance.now(), quick = now - lastShowAt < 2200; lastShowAt = now;
+    if (!quick) return; document.body.classList.add('brisk'); clearTimeout(briskT); briskT = setTimeout(() => document.body.classList.remove('brisk'), 2400); }
   function show(g, fromMuseum) {
     const same = !!(game && g && game.id === g.id);
+    if (!same) brisk();
     const prevSys = fromMuseum ? null : game && game.system && game.system.id; // back from the museum: the console's colour again
     game = g;
     paintTheme(g && g.theme);
@@ -92,8 +115,9 @@
     $('sysName').textContent = g ? (g.system && g.system.name) || '' : '';
     paintSide(same);
     paintFav();
-    paintTrophies(false);
-    paintMore();
+    // (beta.12) the other tabs are painted when they're shown (setTab), not with every game that passes
+    if (tab === 'trophies') paintTrophies(false); else stale.trophies = true;
+    if (tab === 'more') paintMore(); else stale.more = true;
     if (!same) buildCase(g);
   }
 
@@ -135,15 +159,17 @@
   const short = t => t && String(t).replace(/(\d+) h (\d+) min/, '$1h $2m').replace(/^under a minute$/, '< 1 min'); // fits the small box
   function paintSide(same) {
     const box = $('sideTxt'), g = game;
+    // (beta.12) calmer: one quiet line above the title (genre · year), then a line of play time and one of trophies; the
+    // rest of the facts are in Details
+    const boxed = !!g && (g.kind === 'rom' || g.kind === 'steam');
+    const kick = !g ? 'Boxshelf' : [g.genre, g.year].filter(Boolean).join(' · ') || (g.system && g.system.name) || '';
+    const playLine = !boxed ? '' : g.played ? `${esc(short(g.played))} played${g.last ? ' · ' + esc(String(g.last).toLowerCase() === 'today' || String(g.last).toLowerCase() === 'yesterday' ? String(g.last).toLowerCase() : g.last) : ''}` : 'Not played yet';
+    const achLine = !boxed || !g.ach || !g.ach.total ? '' : g.ach.mastered ? 'Mastered · every trophy' : `${g.ach.earned} of ${g.ach.total} trophies`;
     const html = !g ? '<div class="kick">Boxshelf</div><h1 class="title">Nothing selected</h1>' :
-      `<div class="kick">${esc(g.system && g.system.name || '')}</div>
+      `<div class="kick">${esc(kick)}</div>
        <h1 class="title${g.title.length > 38 ? ' long' : ''}">${esc(g.title)}</h1>
-       <div class="meta">${facts(g).slice(0, 4).map(t => `<span>${esc(t)}</span>`).join('')}</div>
-       ${g.kind === 'rom' || g.kind === 'steam' ? `<div class="stats">
-         <div class="stat"><small>Played</small><b>${esc(short(g.played) || 'Not yet')}</b></div>
-         <div class="stat"><small>Last</small><b>${esc(g.last || 'Never')}</b></div>
-         <div class="stat"><small>Trophies</small><b>${g.ach && g.ach.total ? (g.ach.mastered ? 'Mastered' : `${g.ach.earned} / ${g.ach.total}`) : '—'}</b></div>
-       </div>` : g.desc ? `<p class="note">${esc(g.desc.length > 150 ? g.desc.slice(0, 148).replace(/\s+\S*$/, '') + '…' : g.desc)}</p>` : ''}`;
+       ${boxed ? `<p class="line">${playLine}</p>${achLine ? `<p class="line ach">${svg('trophy')}<span>${esc(achLine)}</span></p>` : ''}`
+        : g.desc ? `<p class="note">${esc(g.desc.length > 120 ? g.desc.slice(0, 118).replace(/\s+\S*$/, '') + '…' : g.desc)}</p>` : ''}`;
     const old = box.querySelector('.txt.in');
     if (same && old) { old.innerHTML = html; return; } // the same game again (a favourite, new play time): no fade
     const el = document.createElement('div'); el.className = 'txt'; el.innerHTML = html; box.appendChild(el);
@@ -176,18 +202,18 @@
     app: '<rect x="4" y="4" width="6.5" height="6.5" rx="1.6"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.6"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.6"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.6"/>',
     shelf: '<path d="M3 20h18M4 20V8h3v12M8.5 20V5h3v15M13 20l2.4-12 2.9.6L16 20"/>',
     pad: '<path d="M7 9h10a4 4 0 0 1 4 4.4l-.5 3.3A2.2 2.2 0 0 1 16.6 18l-2-2.2H9.4L7.4 18a2.2 2.2 0 0 1-3.9-1.3L3 13.4A4 4 0 0 1 7 9z"/><path d="M8 11.5v3M6.5 13h3"/><circle class="fill" cx="16" cy="12.2" r="1"/><circle class="fill" cx="17.6" cy="14" r="1"/>',
-    plus: '<path d="M12 5v14M5 12h14"/>', back: '<path d="M15 5l-7 7 7 7"/>'
+    plus: '<path d="M12 5v14M5 12h14"/>', back: '<path d="M15 5l-7 7 7 7"/>', moon: '<path d="M19.5 14.5A7.5 7.5 0 1 1 9.5 4.5a6 6 0 0 0 10 10z"/>'
   };
   const svg = k => `<svg viewBox="0 0 24 24">${ICON[k]}</svg>`;
   function paintTrophies(animate) {
     const box = $('trophies'), g = game, a = g && g.ach;
     if (!g || !(g.kind === 'rom')) { box.innerHTML = `${svg('trophy').replace('<svg', '<svg class="big-ic"')}<p>Trophies show here for games on a console shelf.</p>`; return; }
     if (!g.achOn) { box.innerHTML = `${svg('trophy').replace('<svg', '<svg class="big-ic"')}<p>RetroAchievements isn't connected on this device yet. Once it is, this game's unlocks show up here.</p>`; return; }
-    if (!a || !a.total) { box.innerHTML = `${svg('trophy').replace('<svg', '<svg class="big-ic"')}<p>No achievements found for this game.</p>`; return; }
-    const pct = Math.max(0, Math.min(1, a.earned / a.total));
-    if (!box.querySelector('.ringbox') || box.dataset.id !== g.id) {
-      box.dataset.id = g.id;
-      box.innerHTML = `<div class="ringbox"><svg viewBox="0 0 160 160"><circle class="bgc" cx="80" cy="80" r="70"/><circle class="fg" cx="80" cy="80" r="70"/></svg>
+    if (!a || !a.total) { box.innerHTML = freshHtml() + `${svg('trophy').replace('<svg', '<svg class="big-ic"')}<p>No achievements found for this game.</p>`; return; }
+    const pct = Math.max(0, Math.min(1, a.earned / a.total)), fh = freshHtml();
+    if (!box.querySelector('.ringbox') || box.dataset.id !== g.id || box.dataset.fresh !== String(fh.length)) {
+      box.dataset.id = g.id; box.dataset.fresh = String(fh.length);
+      box.innerHTML = fh + `<div class="ringbox"><svg viewBox="0 0 160 160"><circle class="bgc" cx="80" cy="80" r="70"/><circle class="fg" cx="80" cy="80" r="70"/></svg>
         <div class="num"><b></b><small></small></div></div><div class="badge" hidden>Mastered</div>
         <button class="big" type="button" data-cmd="ach">${svg('tv')}<span>See them all on the big screen</span></button>`;
     }
@@ -204,11 +230,14 @@
   const SC = {
     play: ['Play', 'play', ''], fav: ['Add to favourites', 'heart', ''], details: ['Game details', 'info', 'on the big screen'], inspect: ['Inspect', 'cube', 'on the big screen'],
     manual: ['Manual', 'book', ''], museum: ['Museum', 'museum', 'walk your collection'], art: ['Art Studio', 'art', "this game's box art"], ach: ['Trophies', 'trophy', 'on the big screen'],
-    shuffle: ['Shuffle', 'shuffle', 'a random game'], menu: ['Quick menu', 'menu', 'on the big screen'], settings: ['Settings', 'gear', 'on the big screen'], bsettings: ['Screen settings', 'screen', 'this screen']
+    shuffle: ['Shuffle', 'shuffle', 'a random game'], menu: ['Quick menu', 'menu', 'on the big screen'], settings: ['Settings', 'gear', 'on the big screen'], bsettings: ['Screen settings', 'screen', 'this screen'],
+    sleep: ['Screen off', 'moon', 'tap it to wake'] // (beta.12) this screen goes dark: black on the Thor's OLED panel, its pixels are off
   };
-  const SC_DEF = ['play', 'fav', 'museum', 'manual', 'shuffle', 'menu'], SC_MAX = 6;
+  const SC_DEF = ['play', 'fav', 'museum', 'manual', 'shuffle', 'menu', 'sleep'], SC_MAX = 12; // (beta.12: twelve, in pages of six; was six)
   // (0.3.5) your own shortcuts too: an app on the device (Spotify, a browser…), a console's shelf, a favourite game. Kept
   // as "app:<package>", "shelf:<console>", "game:<id>" in the same list, with their names beside it (scx)
+  // (beta.12) Screen off is new: added once to a list already chosen, where there's room (Edit can take it away again)
+  try { if (!store.get('sc-sleep')) { store.set('sc-sleep', '1'); const L0 = JSON.parse(store.get('shortcuts') || 'null'); if (Array.isArray(L0) && !L0.includes('sleep') && L0.length < SC_MAX) { L0.push('sleep'); store.set('shortcuts', JSON.stringify(L0)); } } } catch {}
   const SCX_KIND = { app: ['An app', 'app', 'Spotify, a browser, any app'], shelf: ['A console', 'shelf', 'straight to its shelf'], game: ['A game', 'pad', 'favourites first'] };
   let scEdit = false, scPick = null; // scPick: the Add list open in the editor { kind, items (null while asked for) }
   const scx = () => { try { const o = JSON.parse(store.get('scx') || 'null'); return o && typeof o === 'object' ? o : {}; } catch { return {}; } };
@@ -218,12 +247,19 @@
   function paintMore() {
     const g = game, rom = !!(g && g.kind === 'rom'), X = scx();
     const off = c => (!g && /^(play|fav|details|inspect|manual|art|ach)$/.test(c)) || (!rom && /^(inspect|manual|art|ach)$/.test(c)) || (c === 'fav' && !(g && (g.kind === 'rom' || g.kind === 'steam')));
-    $('more').innerHTML = scList().map(c => { if (isX(c)) { const x = X[c] || {}; return `<button class="tile mine" type="button" data-sc="${esc(c)}">${svg(xIcon(c))}<span>${esc(x.label || c)}</span>${x.sub ? `<small>${esc(x.sub)}</small>` : ''}</button>`; }
+    const L = scList(), tiles = L.map(c => { if (isX(c)) { const x = X[c] || {}, ic = c.startsWith('app:') && icons.get(c.slice(4));
+        return `<button class="tile mine" type="button" data-sc="${esc(c)}">${ic ? `<img class="ap-ic" src="${esc(ic)}" alt="">` : svg(xIcon(c))}<span>${esc(x.label || c)}</span>${x.sub ? `<small>${esc(x.sub)}</small>` : ''}</button>`; }
       const [l0, ic, sub0] = SC[c], l = c === 'play' && g && g.kind === 'app' ? 'Open' : l0, sub = c === 'manual' ? (g && g.manual ? 'on the big screen' : 'a booklet is made') : sub0;
-      return `<button class="tile${c === 'play' ? ' primary' : ''}" type="button" data-cmd="${c}"${off(c) ? ' disabled' : ''}>${svg(ic)}<span>${esc(l)}</span>${sub ? `<small>${esc(sub)}</small>` : ''}</button>`; }).join('');
+      return `<button class="tile${c === 'play' ? ' primary' : ''}" type="button" data-cmd="${c}"${off(c) ? ' disabled' : ''}>${svg(ic)}<span>${esc(l)}</span>${sub ? `<small>${esc(sub)}</small>` : ''}</button>`; });
+    if (L.length < SC_MAX) tiles.push(`<button class="tile add" type="button" data-add-sc>${svg('plus')}<span>Add a shortcut</span><small>an app, a console, a game</small></button>`);
+    const pages = []; for (let i = 0; i < tiles.length; i += 6) pages.push(`<div class="sc-page">${tiles.slice(i, i + 6).join('')}</div>`);
+    const keep = $('more').scrollLeft; $('more').innerHTML = pages.join(''); $('more').scrollLeft = keep;
+    $('scDots').innerHTML = pages.length > 1 ? pages.map((_, i) => `<i${i === scPage() ? ' class="on"' : ''}></i>`).join('') : '';
     paintFav(); if (scEdit) paintEdit();
   }
-  $('more').addEventListener('click', e => { const b = e.target.closest('[data-sc]'); if (b) cmd('scRun', b.dataset.sc); });
+  const scPage = () => { const m = $('more'); return m.clientWidth ? Math.round(m.scrollLeft / m.clientWidth) : 0; };
+  $('more').addEventListener('scroll', () => { const k = scPage(); $('scDots').querySelectorAll('i').forEach((d, i) => d.classList.toggle('on', i === k)); }, { passive: true });
+  $('more').addEventListener('click', e => { const b = e.target.closest('[data-sc]'); if (b) { cmd('scRun', b.dataset.sc); return; } if (e.target.closest('[data-add-sc]')) setEdit(true); });
   function paintEdit() {
     const L = scList(), X = scx(), opt = (k, ic, label, i) => `<button class="sc-opt${i >= 0 ? ' on' : ''}" type="button" data-k="${esc(k)}">${svg(ic)}<span>${esc(label)}</span>${i >= 0 ? `<i>${i + 1}</i>` : ''}</button>`;
     if (scPick) { // the Add list: every app (console, game) to choose from, one tap adds it
@@ -256,6 +292,157 @@
   });
   function recvOpts(m) { if (!scPick || m.kind !== scPick.kind) return; scPick.items = (Array.isArray(m.items) ? m.items : []).filter(x => x && isX(x.key)); if (scEdit) paintEdit(); }
 
+  // ---------- Consoles (beta.12) ----------
+  // Every shelf with something on it (the shelf sends the list with each game), the one in view lit; a touch takes the big
+  // screen there. Painted only while the tab is open.
+  let shelvesNow = [];
+  function paintSys() {
+    const box = $('sysList'), L = shelvesNow || [];
+    if (!L.length) { box.innerHTML = '<p class="sys-none">Your consoles show here once the shelf has games on it.</p>'; return; }
+    const key = L.map(s => s.id + (s.cur ? '*' : '') + s.n).join(',');
+    if (box.dataset.key === key) return; box.dataset.key = key;
+    box.innerHTML = L.map(s => `<button class="sys-it${s.cur ? ' on' : ''}" type="button" data-sys="${esc(s.id)}" style="--sg:${esc(/^#[0-9a-f]{3,8}$/i.test(s.glow || '') ? s.glow : '#9d8cff')}"><i></i><b>${esc(s.name)}</b><small>${s.n} ${s.kind === 'console' ? (s.n === 1 ? 'game' : 'games') : (s.n === 1 ? 'item' : 'items')}</small></button>`).join('');
+    const on = box.querySelector('.sys-it.on'); if (on) on.scrollIntoView({ block: 'nearest' });
+  }
+  $('sysList').addEventListener('click', e => { const b = e.target.closest('[data-sys]'); if (!b) return;
+    box0(b); cmd('sys', { key: b.dataset.sys }); });
+  const box0 = b => { $('sysList').querySelectorAll('.sys-it').forEach(x => x.classList.toggle('on', x === b)); $('sysList').dataset.key = ''; }; // (lit at once; the shelf's next game confirms it, or puts the light back if the switch was refused)
+
+  // ---------- Apps (beta.12) ----------
+  // The rest of the device: Android's own places (the home screen you had before, Settings, Wi-Fi, Bluetooth), then every
+  // app with an icon. Names come first; icons follow a few at a time, only for this tab, kept for as long as this page
+  // lives. A tap opens the app on the big screen; holding one adds it to Shortcuts.
+  const icons = new Map(); let apps = null, appsAt = 0;
+  const AP_SYS = [['home', 'Android home', '<path d="M4 11l8-6.5 8 6.5M6.5 9.5V19h11V9.5"/>'], ['settings', 'Settings', ICON.gear],
+    ['wifi', 'Wi-Fi', '<path d="M3 9.5a13 13 0 0 1 18 0M6 13a8.5 8.5 0 0 1 12 0M9 16.5a4 4 0 0 1 6 0"/><circle class="fill" cx="12" cy="19.5" r="1.3"/>'],
+    ['bluetooth', 'Bluetooth', '<path d="M7 7.5l10 9-5 4.5V3l5 4.5-10 9"/>']];
+  $('apSys').innerHTML = AP_SYS.map(([k, l, p]) => `<button class="ap-s" type="button" data-sa="${k}"><svg viewBox="0 0 24 24">${p}</svg><span>${l}</span></button>`).join('');
+  $('apSys').addEventListener('click', e => { const b = e.target.closest('[data-sa]'); if (b) cmd('sysAct', b.dataset.sa); });
+  function askApps() { if (!apps) paintApps(); if (!apps || Date.now() - appsAt > 60000) { appsAt = Date.now(); cmd('apps');
+    if (!window.BoxshelfBottom && window.parent === window) setTimeout(() => recvApps({ items: ['RetroArch', 'Dolphin', 'AetherSX2', 'PPSSPP', 'Spotify', 'YouTube', 'Chrome', 'Discord', 'Steam Link', 'Moonlight', 'Camera', 'Gallery', 'Files', 'Clock']
+      .map(l => ({ pkg: 'demo.' + l.toLowerCase().replace(/\W/g, ''), label: l })) }), 150); } } // (opened on its own: a few made-up apps)
+  function recvApps(m) {
+    apps = (Array.isArray(m.items) ? m.items : []).filter(a => a && a.pkg).map(a => ({ pkg: String(a.pkg), label: String(a.label || a.pkg) }));
+    for (const a of m.items || []) if (a && a.icon) icons.set(String(a.pkg), String(a.icon));
+    paintApps();
+    const need = apps.filter(a => !icons.has(a.pkg)).map(a => a.pkg); if (need.length) cmd('appIcons', need);
+  }
+  function recvIcons(o) {
+    if (!o || typeof o !== 'object') return;
+    for (const p of Object.keys(o)) { const u = String(o[p] || ''); if (!/^data:image\//.test(u)) continue; icons.set(p, u);
+      const el = $('apGrid').querySelector(`.ap[data-pkg="${CSS.escape(p)}"] .ap-ic`); if (el && el.tagName !== 'IMG') el.outerHTML = `<img class="ap-ic" src="${esc(u)}" alt="">`; }
+    if (tab === 'more') paintMore();
+  }
+  function paintApps() {
+    const box = $('apGrid');
+    if (!apps) { box.innerHTML = '<p class="ap-none">Looking for your apps…</p>'; return; }
+    if (!apps.length) { box.innerHTML = '<p class="ap-none">No apps found.</p>'; return; }
+    box.innerHTML = apps.map(a => { const u = icons.get(a.pkg), h = [...a.pkg].reduce((n, c) => (n * 31 + c.charCodeAt(0)) % 360, 7);
+      return `<button class="ap" type="button" data-pkg="${esc(a.pkg)}">${u ? `<img class="ap-ic" src="${esc(u)}" alt="">` : `<i class="ap-ic" style="--h:${h}">${esc((a.label.trim()[0] || '?').toUpperCase())}</i>`}<span>${esc(a.label)}</span></button>`; }).join('');
+  }
+  // a tap opens it; holding it (half a second, without moving) adds it to Shortcuts
+  { const grid = $('apGrid'); let hold = null;
+    grid.addEventListener('pointerdown', e => { const b = e.target.closest('.ap'); if (!b) return; clearTimeout(hold && hold.t);
+      hold = { b, x: e.clientX, y: e.clientY, done: false, t: setTimeout(() => { if (!hold || hold.b !== b) return; hold.done = true; const a = (apps || []).find(x => x.pkg === b.dataset.pkg); if (!a) return;
+        const k = 'app:' + a.pkg, had = scList().includes(k); if (!had) scToggle(k, { label: a.label, sub: 'App' }); b.classList.add('held'); setTimeout(() => b.classList.remove('held'), 700);
+        say(had ? `${a.label} is already in Shortcuts` : `${a.label} added to Shortcuts`); }, 500) }; });
+    grid.addEventListener('pointermove', e => { if (hold && Math.hypot(e.clientX - hold.x, e.clientY - hold.y) > 10 * (fit.z || 1)) { clearTimeout(hold.t); hold = null; } }, { passive: true });
+    const up = () => { if (hold) clearTimeout(hold.t); };
+    grid.addEventListener('pointerup', up); grid.addEventListener('pointercancel', () => { up(); hold = null; });
+    grid.addEventListener('click', e => { const b = e.target.closest('.ap'); if (!b) return; const h = hold; hold = null; if (h && h.done) return; cmd('scRun', 'app:' + b.dataset.pkg); });
+    grid.addEventListener('contextmenu', e => e.preventDefault()); }
+
+  // ---------- a swipe up on the Game card: Details on the big screen (beta.12) ----------
+  { const side = $('side'); let sw = null;
+    side.addEventListener('pointerdown', e => { if (e.target.closest('button')) return; sw = { x: e.clientX, y: e.clientY, t: performance.now() }; });
+    side.addEventListener('pointerup', e => { const s = sw; sw = null; if (!s || !game) return; const z = fit.z || 1, dx = (e.clientX - s.x) / z, dy = (e.clientY - s.y) / z;
+      if (dy < -50 && Math.abs(dy) > Math.abs(dx) * 1.5 && performance.now() - s.t < 600) cmd('details'); });
+    side.addEventListener('pointercancel', () => { sw = null; }); }
+
+  // ---------- the companions (beta.12) ----------
+  // While the big screen shows a manual or a guide, Find a game or a game's Details, this page shows a panel for it over
+  // everything else: big page and zoom buttons for reading, a keyboard and the first matches for Find, the pictures and
+  // the main buttons for Details. The shelf sends what's up ({ type: 'ctx', ctx }); null hands the page back.
+  const ctxEl = $('ctx'); let CX0 = null, findQ = null;
+  const CI = { prev: ICON.back, next: '<path d="M9 5l7 7-7 7"/>', x: '<path d="M6 6l12 12M18 6L6 18"/>', zin: '<circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5M11 8v6M8 11h6"/>', zout: '<circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5M8 11h6"/>',
+    fit: '<rect x="5" y="3.5" width="14" height="17" rx="1.5"/><path d="M9 8h6M9 12h6M9 16h4"/>', one: '<rect x="7" y="4" width="10" height="16" rx="1.5"/>', two: '<rect x="3" y="5" width="8.5" height="14" rx="1.2"/><rect x="12.5" y="5" width="8.5" height="14" rx="1.2"/>',
+    snd: '<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/>', mute: '<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M16 9.5l5 5M21 9.5l-5 5"/>', bksp: '<path d="M9 6h10a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H9l-6-6z"/><path d="M12 10l4 4M16 10l-4 4"/>' };
+  const ci = (k, cls) => `<svg viewBox="0 0 24 24"${cls ? ` class="${cls}"` : ''}>${CI[k] || ICON[k] || ''}</svg>`;
+  const isCtx = () => !!CX0;
+  function showCtx(c) {
+    const ok = c && /^(reader|find|details)$/.test(c.kind) ? c : null, was = CX0;
+    if (!ok) { if (!was) return; CX0 = null; findQ = null; document.body.classList.remove('ctx-on'); ctxEl.setAttribute('aria-hidden', 'true'); ctxEl.dataset.k = ''; return; }
+    if (!was) { if (focus) exitFocus(true); else if (isOpen()) closeCase(true); if (roomOpen) toggleRoom(false); hint(''); }
+    CX0 = ok; document.body.classList.add('ctx-on'); ctxEl.setAttribute('aria-hidden', 'false');
+    if (ok.kind === 'find') findQ = null; // (the shelf's answer: what was typed really is this)
+    if (ctxEl.dataset.k !== ok.kind) { ctxEl.dataset.k = ok.kind; ctxEl.innerHTML = ok.kind === 'reader' ? READER_HTML : ok.kind === 'find' ? findHtml() : DET_HTML; }
+    if (ok.kind === 'reader') paintReader(ok); else if (ok.kind === 'find') paintFind(ok); else paintDet(ok);
+  }
+  // reading: the page counter and a slider to any page, big turn buttons either side, zoom and one / two pages
+  const READER_HTML = `<div class="cx-head"><div class="cx-t"><small class="cx-kind"></small><b class="cx-title"></b></div><button class="cx-done" type="button" data-rd="close">${ci('x')}<span>Done</span></button></div>
+    <div class="rd-turn"><button class="rd-big" type="button" data-rd="prev" aria-label="Previous page">${ci('prev')}</button>
+      <div class="rd-mid"><div class="rd-label"></div><input class="rd-scrub" type="range" min="1" max="1" step="1" value="1" aria-label="Go to page"><div class="rd-ends"><span>1</span><span class="rd-n"></span></div></div>
+      <button class="rd-big" type="button" data-rd="next" aria-label="Next page">${ci('next')}</button></div>
+    <div class="rd-tools"><button class="cx-b" type="button" data-rd="zout">${ci('zout')}<span>Smaller</span></button><button class="cx-b" type="button" data-rd="fit">${ci('fit')}<span>Whole page</span></button>
+      <button class="cx-b" type="button" data-rd="zin">${ci('zin')}<span>Closer</span></button><button class="cx-b rd-pg" type="button" data-rd="one"></button></div>`;
+  function paintReader(c) {
+    const q = s => ctxEl.querySelector(s);
+    q('.cx-kind').textContent = c.src === 'guide' ? 'Reading' : 'Manual'; q('.cx-title').textContent = c.title || '';
+    q('.rd-label').textContent = c.label || ''; q('.rd-n').textContent = c.pages ? String(c.pages) : '';
+    const sc = q('.rd-scrub'); sc.max = String(Math.max(1, c.pages || 1)); sc.disabled = !(c.pages > 1); if (!sc._drag) sc.value = String(Math.max(1, c.page || 1));
+    q('[data-rd="fit"]').classList.toggle('off', !c.zoom);
+    const pg = q('.rd-pg'); pg.hidden = c.src === 'guide'; pg.dataset.rd = c.one ? 'two' : 'one'; pg.innerHTML = c.one ? `${ci('two')}<span>Two pages</span>` : `${ci('one')}<span>One page</span>`;
+  }
+  // Find: what's typed, the first matches (a touch goes there), and a keyboard
+  const KB = ['1234567890', 'QWERTYUIOP', 'ASDFGHJKL', 'ZXCVBNM'];
+  const findHtml = () => `<div class="cx-head"><div class="fd-field"><svg class="fd-ic" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg><span class="fd-q"></span><small class="fd-n"></small></div><button class="cx-done" type="button" data-fd="close">${ci('x')}<span>Close</span></button></div>
+    <div class="fd-res"></div>
+    <div class="fd-kb">${KB.map((r, i) => `<div class="fd-r">${[...r].map(k => `<button class="fd-k" type="button" data-k="${k}">${k}</button>`).join('')}${i === 3 ? `<button class="fd-k fd-w" type="button" data-fd="back" aria-label="Delete">${ci('bksp')}</button>` : ''}</div>`).join('')}
+      <div class="fd-r"><button class="fd-k fd-w" type="button" data-fd="clear">Clear</button><button class="fd-k fd-sp" type="button" data-fd="space">Space</button></div></div>`;
+  function paintFind(c) {
+    const q = ctxEl.querySelector('.fd-q'), shown = findQ != null ? findQ : c.q || '';
+    q.textContent = shown || 'Type a title'; q.classList.toggle('ph', !shown);
+    ctxEl.querySelector('.fd-n').textContent = !c.loaded ? '' : shown ? (c.total ? `${c.total} ${c.total === 1 ? 'match' : 'matches'}` : 'No match') : 'Recently played';
+    const res = (c.res || []).slice(0, 4);
+    ctxEl.querySelector('.fd-res').innerHTML = res.map(r => `<button class="fd-row${r.i === c.sel ? ' on' : ''}" type="button" data-pick="${r.i}"><b>${esc(r.title)}</b><small>${esc(r.sys || '')}</small></button>`).join('') || (c.loaded && shown ? `<p class="fd-none">Nothing called “${esc(shown.trim())}”</p>` : '');
+  }
+  // Details: the screenshots (a touch shows one big), Play, the trailer's sound, Inspect, the heart, back to the shelf
+  const DET_HTML = `<div class="cx-head"><div class="cx-t"><small>Details</small><b class="cx-title"></b></div><button class="cx-done" type="button" data-dt="close">${ci('prev')}<span>Back</span></button></div>
+    <div class="dt-shots"></div><p class="dt-tip">Tap a picture to see it big on the top screen</p>
+    <div class="dt-acts"><button class="dt-play" type="button" data-cmd="play">${svg('play')}<span>Play</span></button>
+      <button class="cx-b dt-snd" type="button" data-dt="sound"></button><button class="cx-b dt-isp" type="button" data-cmd="inspect">${svg('cube')}<span>Inspect</span></button>
+      <button class="cx-b dt-fav" type="button" data-cmd="fav">${svg('heart')}<span>Favourite</span></button></div>`;
+  function paintDet(c) {
+    const q = s => ctxEl.querySelector(s);
+    q('.cx-title').textContent = c.title || '';
+    const sh = Array.isArray(c.shots) ? c.shots : [], box = q('.dt-shots'), key = c.id + '|' + sh.length;
+    if (box.dataset.key !== key) { box.dataset.key = key;
+      box.innerHTML = sh.length ? sh.map((u, i) => `<button class="dt-shot" type="button" data-shot="${i}"><img src="${esc(u)}" alt="" decoding="async" loading="lazy"></button>`).join('') : '<p class="dt-none">No screenshots for this game yet.</p>'; }
+    box.querySelectorAll('.dt-shot').forEach((b, i) => b.classList.toggle('on', i === c.shot));
+    q('.dt-tip').hidden = !sh.length; q('.dt-tip').textContent = c.shot >= 0 ? 'Tap another picture to switch · swipe it on the top screen' : 'Tap a picture to see it big on the top screen';
+    const snd = q('.dt-snd'); snd.hidden = !c.sound; snd.innerHTML = c.sound === 'on' ? `${ci('snd')}<span>Sound on</span>` : `${ci('mute')}<span>Sound off</span>`;
+    q('.dt-isp').hidden = !c.inspect; const f = q('.dt-fav'); f.hidden = c.fav == null; f.classList.toggle('on', !!c.fav);
+    q('[data-dt="close"] span').textContent = c.shot >= 0 ? 'Close picture' : 'Back';
+  }
+  ctxEl.addEventListener('click', e => {
+    const t = e.target.closest('button'); if (!t || !CX0) return;
+    if (t.dataset.rd) { cmd('rd', { key: t.dataset.rd }); return; }
+    if (t.dataset.k) { findQ = (findQ != null ? findQ : CX0.q || ''); findQ += !findQ || findQ.endsWith(' ') ? t.dataset.k : t.dataset.k.toLowerCase(); paintFind(CX0); cmd('find', { key: 'k', val: t.dataset.k }); return; }
+    if (t.dataset.fd) { const k = t.dataset.fd, q0 = findQ != null ? findQ : CX0.q || '';
+      if (k === 'back') findQ = q0.slice(0, -1); else if (k === 'clear') findQ = ''; else if (k === 'space' && q0 && !q0.endsWith(' ')) findQ = q0 + ' ';
+      if (k !== 'close') paintFind(CX0); cmd('find', { key: k }); return; }
+    if (t.dataset.pick != null) { cmd('find', { key: 'pick', val: +t.dataset.pick }); return; }
+    if (t.dataset.shot != null) { cmd('det', { key: 'shot', val: +t.dataset.shot }); return; }
+    if (t.dataset.dt) { cmd('det', { key: t.dataset.dt === 'close' ? (CX0.shot >= 0 ? 'shotClose' : 'close') : t.dataset.dt }); return; }
+  });
+  // the page slider: the page number follows the finger, the big screen turns there once it's let go
+  ctxEl.addEventListener('input', e => { const s = e.target; if (!s.classList || !s.classList.contains('rd-scrub') || !CX0) return; s._drag = true;
+    ctxEl.querySelector('.rd-label').textContent = `Page ${s.value} of ${CX0.pages}`; });
+  ctxEl.addEventListener('change', e => { const s = e.target; if (!s.classList || !s.classList.contains('rd-scrub')) return; s._drag = false; cmd('rd', { key: 'goto', val: +s.value }); });
+  // (let go where it started, no change event comes: the slider follows the pages again all the same)
+  const scrubUp = e => { const s = e.target; if (s && s.classList && s.classList.contains('rd-scrub')) setTimeout(() => { s._drag = false; if (CX0 && CX0.kind === 'reader') paintReader(CX0); }, 0); };
+  ctxEl.addEventListener('pointerup', scrubUp); ctxEl.addEventListener('pointercancel', scrubUp);
+
   // ---------- the case ----------
   // Built the way the shelf builds its cases on the top screen (style.css): real thickness from the console's style
   // (depth × width), rounded corners on the opening side (rc), a frame of case plastic round the printed sleeve (edge),
@@ -264,6 +451,8 @@
   // The print uses the game's real art where it has it (front, back, spine, or one whole wrap image) and a made-up
   // sleeve where it doesn't.
   const isOpen = () => !!(V && V.box && V.box.classList.contains('open'));
+  // (beta.12) what the case holds, in a word: the shelf sends it (Disc / Cartridge / UMD / Floppy disk), else from the kind
+  const mWord = g => { const m = (g && g.media) || {}; return String(m.word || (m.kind === 'cart' ? 'Cartridge' : m.kind === 'umd' ? 'UMD' : 'Disc')).replace(' disk', ''); };
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
   function sizeFor(g) {
     const st = g.style || {}, ratio = clamp(+st.ratio || 0.71, 0.45, 1.6), pack = /^(keep|jewel|box)$/.test(st.pack) ? st.pack : 'keep';
@@ -354,7 +543,8 @@
         wrapSlices(full, s, { front: front ? null : slot(pf), back: art.back ? null : slot(pb), spine: art.spine ? null : slot(ps) }, ims);
       }
       const disc = box.querySelector('.media .disc');
-      if (art.disc && media === 'disc') { const im = img(art.disc); disc.appendChild(im); ims.push(im); }
+      // its own picture (a disc, or a whole cartridge / UMD photographed: drawn as it is, beta.12), else the cover as a label
+      if (art.disc) { const im = img(art.disc); disc.appendChild(im); ims.push(im); }
       else if (front) disc.appendChild(img(front)); else disc.innerHTML = '<div class="lab"></div>';
       const bk = box.querySelector('.booklet'); if (bk && front) bk.prepend(img(front));
       mediaEl = box.querySelector('.media');
@@ -428,7 +618,7 @@
     V.box.classList.add('open'); caseView.classList.add('opened'); openCase.at = performance.now();
     facing(); applySpin(true); // (after the class: an open case turns about its hinge)
     placePos(true); paintOpenChip();
-    hint('Tap the ' + (V.box.classList.contains('disc') ? 'disc' : 'cartridge') + ' to look at it' + (V.box.querySelector('.booklet') ? ' · tap the manual to read it' : ''), 'disc');
+    hint('Tap the ' + (mWord(game) === 'UMD' ? 'UMD' : mWord(game).toLowerCase()) + ' to look at it' + (V.box.querySelector('.booklet') ? ' · tap the manual to read it' : ''), 'disc');
     poke();
   }
   function closeCase(now) {
@@ -588,7 +778,10 @@
       // open: a tap on the manual opens it on the big screen (not the tap that opened the case landing on it)
       if (isOpen()) { if (d.t.closest('.booklet') && now - (openCase.at || 0) > 500) cmd('manual'); poke(); return; }
       // closed (0.3.2): the first tap on the case brings it in close (Inspect); a tap in there opens it
-      if (V.boxed && d.t.closest('.case')) { if (!focus) enterFocus(); else openCase(); return; }
+      // (beta.12: a tap inside the case's outline counts too: a case left edge-on shows only its thin spine, and a finger
+      // just beside it meant nothing)
+      const onCase = !!d.t.closest('.case') || (() => { const r = V.box.getBoundingClientRect(); return e.clientX >= r.left - 8 && e.clientX <= r.right + 8 && e.clientY >= r.top && e.clientY <= r.bottom; })();
+      if (V.boxed && onCase) { if (!focus) enterFocus(); else openCase(); return; }
       poke(); return;
     }
     // a flick keeps it turning, both ways, and it slows to a stop by itself
@@ -626,6 +819,34 @@
     el.textContent = text; el.classList.add('on');
     clearTimeout(hintT); hintT = setTimeout(() => el.classList.remove('on'), 5000);
   }
+  // ---------- Screen off (beta.12) ----------
+  // The Shortcuts tile turns this screen dark: everything fades to black (black on an OLED panel is pixels off) and
+  // stops drawing; messages from the shelf meanwhile are only kept (the newest of each kind) and shown on waking. A tap
+  // anywhere wakes it. Nothing runs while it's dark.
+  let asleep = false; const slept = new Map();
+  const sleepEl = document.createElement('div'); sleepEl.id = 'sleep'; sleepEl.innerHTML = '<span>Tap to wake</span>'; stage.appendChild(sleepEl);
+  function sleep(on) {
+    on = !!on; if (on === asleep) return; asleep = on;
+    if (on) { if (focus) exitFocus(true); else if (isOpen()) closeCase(true); stopFlick(); clearTimeout(idleT); if (V) V.sway.classList.remove('idle'); hint(''); }
+    document.body.classList.toggle('asleep', on);
+    if (!on) { const L = [...slept.values()]; slept.clear(); for (const m of L) recv(m); poke(); }
+  }
+  // dark: the newest message of each kind is kept (in the order they came), icon batches all merged, and shown on waking.
+  // Back from a game (or a while later), "Tap to wake" shows again, so a black panel never looks broken
+  function keepAsleep(m) {
+    const k = m.type === 'museum' ? 'game' : m.type, was = slept.get(k);
+    if (k === 'appIcons' && was) m = { type: 'appIcons', icons: Object.assign({}, was.icons, m.icons) };
+    slept.delete(k); slept.set(k, m);
+    if (performance.now() - (keepAsleep.at || 0) > 30000) note(); keepAsleep.at = performance.now();
+  }
+  const note = () => { const sp = sleepEl.firstChild; if (!sp || !asleep) return; sp.style.animation = 'none'; void sp.offsetWidth; sp.style.animation = ''; };
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) note(); });
+  // (pointerdown, so the touch that wakes it never also presses whatever is under it once it's lit again)
+  sleepEl.addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); sleepEl._t = performance.now(); sleep(false); });
+  sleepEl.addEventListener('click', e => { e.stopPropagation(); });
+
+  // a short note on the top line, every time (what a hold just did)
+  function say(text) { const el = $('hint'); el.textContent = text; el.classList.add('on'); clearTimeout(hintT); hintT = setTimeout(() => el.classList.remove('on'), 2600); }
 
   // ---------- the museum's companion ----------
   // While the top screen is in the museum, this page shows the row you're on as a wooden shelf of cases (the chosen one
@@ -784,8 +1005,9 @@
   const pill = (m, arg, ic, label, extra) => `<button class="mpill${extra || ''}" type="button" data-m="${m}"${arg != null ? ` data-a="${arg}"` : ''}><svg viewBox="0 0 24 24">${PI[ic]}</svg><span>${label}</span></button>`;
   function pills(hd, has, sealed, row, artOk) {
     if (hd.held) {
-      const back = hd.discOut ? pill('mback', null, 'disc', 'Disc back') : hd.open ? pill('mback', null, 'open', 'Close case') : pill('mback', null, 'back', 'Put back');
-      const act = sealed || hd.discOut ? '' : hd.open ? pill('mact', null, 'disc', 'Disc out', ' hi') : pill('mact', null, 'open', 'Open case', ' hi');
+      const w = esc(String(hd.word || 'Disc').replace(' disk', ''));
+      const back = hd.discOut ? pill('mback', null, 'disc', w + ' back') : hd.open ? pill('mback', null, 'open', 'Close case') : pill('mback', null, 'back', 'Put back');
+      const act = sealed || hd.discOut ? '' : hd.open ? pill('mact', null, 'disc', w + ' out', ' hi') : pill('mact', null, 'open', 'Open case', ' hi');
       return back + act;
     }
     const top = row && row.i <= 0, bot = row && row.n != null && row.i >= row.n - 1;
@@ -966,7 +1188,7 @@
       msealed: !!mCard.querySelector('.mc-case.sealed'), mtitle: (mCard.querySelector('.title') || {}).textContent || '',
       focus, zoom, room: roomOpen, mheld: held(), pills: [...mCard.querySelectorAll('.mpill span')].map(x => x.textContent),
       solo: solo.on, srx: solo.rx, sry: solo.ry, shortcuts: scList(), editing: scEdit, theme: document.body.dataset.theme || '', themed: document.body.classList.contains('themed'),
-
+      ctx: CX0 ? CX0.kind : null, apps: apps ? apps.length : null, icons: icons.size, shelves: shelvesNow.length,
       studio: isStudio() ? { id: SD && SD.id, open: isOpen(), art: Object.assign({}, SD && SD.art), menu: !!document.querySelector('.sd, .sd-grid') } : null }) };
   addEventListener('message', e => { if (e.source === window.parent && e.data && e.data.bsBottomRecv) recv(e.data.bsBottomRecv); }); // a preview inside the main page
   setTab(store.get('tab') || 'case', true);
@@ -976,7 +1198,9 @@
   // opened directly in a browser (no shelf talking to it): a demo game, so the page can be seen and tested
   // (?demo=museum shows the museum companion instead)
   const alone = !window.BoxshelfBottom && window.parent === window && !/[?&]demo=0/.test(location.search);
-  if (alone) setTimeout(() => { if (!game && !isMuseum()) { if (/[?&]demo=museum/.test(location.search)) recv({ type: 'museum', ...demoMuseum() }); else show(demoGame()); } }, 250);
+  if (alone) setTimeout(() => { if (!game && !isMuseum()) { if (/[?&]demo=museum/.test(location.search)) recv({ type: 'museum', ...demoMuseum() }); else recv({ type: 'game', game: demoGame(),
+    shelves: [['gc', 'GameCube', 15, '#9d8cff', 1], ['ps2', 'PlayStation 2', 42, '#5aa0ff'], ['nds', 'DS', 23, '#c9d1ff'], ['psp', 'PSP', 8, '#ff9f6b'], ['snes', 'Super Nintendo', 31, '#b48cff'], ['media', 'Apps', 12, '#b9a6ff']]
+      .map(([id, name, n, glow, cur]) => ({ id, name, n, glow, kind: id === 'media' ? 'apps' : 'console', cur: !!cur })) }); } }, 250);
   const svgUrl = s => 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(s);
   function demoCover(a, b, title, sub) {
     return svgUrl(`<svg xmlns="http://www.w3.org/2000/svg" width="420" height="590" viewBox="0 0 420 590">

@@ -36,7 +36,7 @@ function epicGames(dir = EPIC_DIR()) {
     const id = 'epic-' + slug(app); if (seen.has(id)) continue; seen.add(id);
     const ns = String(m.CatalogNamespace || ''), item = String(m.CatalogItemId || '');
     const uri = 'com.epicgames.launcher://apps/' + (ns && item ? encodeURIComponent(`${ns}:${item}:${app}`) : encodeURIComponent(app)) + '?action=launch&silent=true';
-    out.push({ id, source: 'epic', title, uri, exe: m.InstallLocation && m.LaunchExecutable ? path.join(m.InstallLocation, m.LaunchExecutable) : '' });
+    out.push({ id, source: 'epic', title, uri, exe: m.InstallLocation && m.LaunchExecutable ? path.join(m.InstallLocation, m.LaunchExecutable) : '', dir: m.InstallLocation ? String(m.InstallLocation) : '' }); // (beta.12 dir: Seamless play watches the game there, main/gamewatch.js)
   }
   return out.sort((a, b) => a.title.localeCompare(b.title));
 }
@@ -86,7 +86,7 @@ async function ubisoftGames() {
   for (const [k, v] of await regTree('HKLM\\SOFTWARE\\WOW6432Node\\Ubisoft\\Launcher\\Installs')) {
     const id = (/\\Installs\\(\d+)$/i.exec(k) || [])[1], dir = String(v.installdir || '').replace(/[\\/]+$/, '').replace(/\//g, '\\');
     if (!id || !dir || !isDir(dir)) continue;
-    out.push({ id: 'ubisoft-' + id, source: 'ubisoft', title: path.basename(dir), uri: `uplay://launch/${id}/0`, exe: mainExe(dir) || '' });
+    out.push({ id: 'ubisoft-' + id, source: 'ubisoft', title: path.basename(dir), uri: `uplay://launch/${id}/0`, exe: mainExe(dir) || '', dir });
   }
   return out;
 }
@@ -107,7 +107,7 @@ function eaFromDirs(dirs) {
     if (!ids.length) continue;
     const en = /<gameTitle\s+locale="en_US"\s*>([^<]+)</i.exec(x), title = unxml(en ? en[1] : xmlText(x, 'gameTitle')) || path.basename(d);
     const id = 'ea-' + slug(ids[0]); if (seen.has(id)) continue; seen.add(id);
-    out.push({ id, source: 'ea', title: title.trim(), uri: 'origin2://game/launch?offerIds=' + encodeURIComponent(ids.join(',')) + '&autoDownload=1', exe: mainExe(d) || '' });
+    out.push({ id, source: 'ea', title: title.trim(), uri: 'origin2://game/launch?offerIds=' + encodeURIComponent(ids.join(',')) + '&autoDownload=1', exe: mainExe(d) || '', dir: d });
   }
   return out;
 }
@@ -136,7 +136,7 @@ async function xboxGames() {
     for (const line of outp.split(/\r?\n/)) { const [n, fam] = line.trim().split('|'); if (n && fam) xboxFam[n] = fam; }
     try { fs.mkdirSync(dataDir, { recursive: true }); fs.writeFileSync(xboxFile(), JSON.stringify(xboxFam)); } catch {}
   }
-  return found.filter(f => xboxFam[f.name]).map(f => ({ id: 'xbox-' + slug(f.name), source: 'xbox', title: f.title.trim(), shellApp: `${xboxFam[f.name]}!${f.appId}`, exe: '' }));
+  return found.filter(f => xboxFam[f.name]).map(f => ({ id: 'xbox-' + slug(f.name), source: 'xbox', title: f.title.trim(), shellApp: `${xboxFam[f.name]}!${f.appId}`, exe: '', dir: f.dir }));
 }
 // the games in these Xbox games folders: { name (its package), appId, title, dir }
 function xboxScan(roots) {

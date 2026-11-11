@@ -96,7 +96,7 @@ module.exports = async function artUiPass({ browser, base, check, newPage, OUT }
       const key = k => document.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true }));
       const until = async (ok, ms = 5000) => { for (let t = 0; t < ms && !ok(); t += 100) await w(100); await w(150); };
       const h3 = () => (document.querySelector('.bsa-ch h3') || {}).textContent || '';
-      const slot = () => [...document.querySelectorAll('.bsa-card')].find(d => d.querySelector('.in.acct'));
+      const slot = (re = /SteamGridDB/) => [...document.querySelectorAll('.bsa-card')].find(d => d.querySelector('.in.acct') && re.test(d.textContent));
       await until(() => h3() === 'Front cover' && !!slot());
       const s = slot(); out.label = s ? s.querySelector('.ed').textContent : '';
       if (s) s.click();
@@ -106,10 +106,10 @@ module.exports = async function artUiPass({ browser, base, check, newPage, OUT }
       key('Escape'); await until(() => h3() === 'Front cover' && !!slot()); out.back = h3(); out.slotAgain = !!slot();
       const backTab = document.querySelector('.bsa-part[data-r="1"]'); if (backTab) backTab.click(); // (the Back tab, by mouse)
       await until(() => h3() === 'Back cover' && document.querySelectorAll('.bsa-card').length > 1);
-      out.backTab = h3(); out.backSlot = !!slot();
+      out.backTab = h3(); out.backSlot = !!slot(); out.ssBack = !!slot(/ScreenScraper/); // (beta.12: ScreenScraper's card on every part)
       return out; });
-    check('Box art (Windows): without a SteamGridDB key the Front has an "Add SteamGridDB" slot that opens its account page and comes back (none on the Back)',
-      sg.label === 'Add SteamGridDB' && /Accounts & services\s+›\s+SteamGridDB/.test(sg.crumb) && /Art Studio/.test(sg.foot) && sg.back === 'Front cover' && sg.slotAgain && sg.backTab === 'Back cover' && !sg.backSlot, JSON.stringify(sg).slice(0, 400));
+    check('Box art (Windows): without a SteamGridDB key the Front has an "Add SteamGridDB" slot that opens its account page and comes back (none on the Back; ScreenScraper\'s slot is there, beta.12)',
+      sg.label === 'Add SteamGridDB' && /Accounts & services\s+›\s+SteamGridDB/.test(sg.crumb) && /Art Studio/.test(sg.foot) && sg.back === 'Front cover' && sg.slotAgain && sg.backTab === 'Back cover' && !sg.backSlot && sg.ssBack, JSON.stringify(sg).slice(0, 400));
     // (beta.9) Settings → Get manuals → Check my manuals: a step per console with what's been looked at so far, then the result
     const mc = await page.evaluate(async () => { const w = ms => new Promise(r => setTimeout(r, ms)), out = { seen: [] };
       if (window.Settings && Settings.isOpen && Settings.isOpen()) { await Settings.close(); await w(900); }

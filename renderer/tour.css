@@ -1,7 +1,7 @@
 /* (beta.11, Windows) The shelf tour (tour.js): the screen dimmed around one part, and a card in Settings' style beside it.
    Sized from the window's width like the rest of the app (16 px at 1600 wide). Only opacity and the spotlight's box move. */
 #bsTour{--acc:#6b8cff;--acc2:#a9bfff;--ink:#f3f5fb;--ink2:#d5d9e6;--dim:#a4abbf;--faint:#7c8399;--line:rgba(255,255,255,.08);
-  position:fixed;inset:0;z-index:400;display:none;font-family:var(--ui,'Lexend',system-ui,sans-serif);color:var(--ink);
+  position:fixed;inset:0;z-index:400;display:none;font-family:var(--ui,'Mona Sans',system-ui,sans-serif);color:var(--ink);
   font-size:clamp(13px,1vw,24px);-webkit-user-select:none;user-select:none}
 #bsTour.on{display:block}
 #bsTour .bt-spot{position:absolute;border-radius:1em;pointer-events:none;
@@ -27,11 +27,12 @@
 #bsTour .bt-cap{display:inline-grid;place-items:center;min-width:1.9em;height:1.75em;padding:0 .45em;box-sizing:border-box;border-radius:.45em;border:1.5px solid rgba(255,255,255,.55);font-size:.8em;font-weight:600;color:#fff}
 #bsTour .bt-word{font-size:.85em;color:var(--faint);margin-right:.2em}
 #bsTour .bt-foot{display:flex;align-items:center;justify-content:space-between;gap:1em;margin-top:1.25em;padding-top:.9em;border-top:1px solid var(--line)}
-#bsTour .bt-dots{display:flex;gap:.38em;flex:none}
-#bsTour .bt-dots i{width:.44em;height:.44em;border-radius:50%;background:rgba(255,255,255,.18)}
-#bsTour .bt-dots i.on{width:1.25em;border-radius:99px;background:var(--acc2)}
-#bsTour .bt-acts{display:flex;gap:1em;align-items:center}
-#bsTour .bt-btn{display:inline-flex;align-items:center;gap:.5em;white-space:nowrap;font:500 .94em var(--ui,'Lexend',system-ui,sans-serif);color:var(--ink2);background:none;border:0;padding:.3em .2em;border-radius:.5em;cursor:pointer}
+/* (beta.12: ten or eleven steps now: smaller dots, closer together, so Skip and Next stay inside the card) */
+#bsTour .bt-dots{display:flex;gap:.26em;flex:none}
+#bsTour .bt-dots i{width:.3em;height:.3em;border-radius:50%;background:rgba(255,255,255,.18)}
+#bsTour .bt-dots i.on{width:1em;border-radius:99px;background:var(--acc2)}
+#bsTour .bt-acts{display:flex;gap:.7em;align-items:center}
+#bsTour .bt-btn{display:inline-flex;align-items:center;gap:.5em;white-space:nowrap;font:500 .94em var(--ui,'Mona Sans',system-ui,sans-serif);color:var(--ink2);background:none;border:0;padding:.3em .2em;border-radius:.5em;cursor:pointer}
 #bsTour .bt-btn:hover,#bsTour .bt-btn:focus-visible{color:#fff;outline:none;background:rgba(255,255,255,.06)}
 #bsTour .bt-g{display:inline-flex}
 /* a d-pad press while the tour is up: Next pulses once (the tour has the controller; A goes on) */

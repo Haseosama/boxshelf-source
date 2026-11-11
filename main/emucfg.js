@@ -92,9 +92,10 @@ function setIni(f, section, want, label) {
     const m = /^\[(.+)\]\s*$/.exec(lines[i]); if (m) { sec = m[1]; if (sec === section) at = i; continue; }
     if (sec !== section) continue;
     const k = lines[i].split('=')[0].trim();
-    if (want[k] !== undefined) { seen.add(k); if (lines[i].split('=').slice(1).join('=').trim() !== want[k]) { lines[i] = `${k} = ${want[k]}`; changed = true; } }
+    // (beta.12) null: the key goes (an undo putting back "it wasn't there")
+    if (want[k] !== undefined) { seen.add(k); if (want[k] === null) { lines.splice(i, 1); i--; changed = true; continue; } if (lines[i].split('=').slice(1).join('=').trim() !== want[k]) { lines[i] = `${k} = ${want[k]}`; changed = true; } }
   }
-  const missing = Object.keys(want).filter(k => !seen.has(k)).map(k => `${k} = ${want[k]}`);
+  const missing = Object.keys(want).filter(k => !seen.has(k) && want[k] !== null).map(k => `${k} = ${want[k]}`);
   if (missing.length) { changed = true; if (at < 0) { if (lines.length && lines[lines.length - 1] !== '') lines.push(''); lines.push(`[${section}]`, ...missing); } else lines.splice(at + 1, 0, ...missing); }
   if (!changed) return false;
   writeIni(f, lines.join(nl) + (lines[lines.length - 1] === '' ? '' : nl), ini);

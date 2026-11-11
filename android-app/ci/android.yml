@@ -4,9 +4,15 @@
 #   that run at the same time (thor, screens, windows; beta.7: one after another it took ~38 min). publish: the APK
 #   (Boxshelf-thor-debug) only when all three groups passed. Results: each test job's Summary; screenshots in the
 #   "device-test-<group>" artifacts.
+# Actions minutes (the private repo has 2,000 a month; the three test groups are ~45 of every run's ~46): a push only
+#   builds the APK (~1 min, catches Java that doesn't compile). The device test and the published APK run when the last
+#   commit's message has [build] in it, or from Actions → Android build → Run workflow. The same test runs on the PC
+#   before every push, so a push in between doesn't need it again here.
 # Optional full test on a real Android emulator: Actions → Android build → Run workflow → tick "Also run the emulator test".
 # Source of truth: android-app/ci/android.yml (copied here by android-app/ci/Install GitHub build.bat).
 name: Android build
+# (beta.12) each run's title is the build and what it does, never a commit's text (the APK's version is android-app/package.json's)
+run-name: "Android · ${{ (github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[build]')) && 'APK + device test' || 'compile check (no [build])' }}"
 
 on:
   push:
@@ -15,6 +21,7 @@ on:
       - 'shared/**'
       - 'android-app/**'
       - '.github/workflows/android.yml'
+      - '!**/*.md'
   workflow_dispatch:
     inputs:
       emulator:
@@ -27,7 +34,9 @@ permissions:
 
 concurrency:
   group: android-${{ github.ref }}
-  cancel-in-progress: true
+  # only a build that's going out replaces one still running: a quick push without [build] waits instead of cancelling
+  # a [build] run (which would then publish nothing at all)
+  cancel-in-progress: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[build]') }}
 
 jobs:
   apk:
@@ -56,6 +65,15 @@ jobs:
         working-directory: android-app
         run: npm run sync
 
+      # (beta.10) Boxshelf's ScreenScraper developer login into the APK's assets (outside the web page's folder), from the
+      # repository's secrets (never in git or the log); skipped until the SS_DEV_ID and SS_DEV_PASS secrets exist
+      - name: ScreenScraper developer login (from secrets)
+        env:
+          SS_DEV_ID: ${{ secrets.SS_DEV_ID }}
+          SS_DEV_PASS: ${{ secrets.SS_DEV_PASS }}
+        run: |
+          if [ -n "$SS_DEV_ID" ] && [ -n "$SS_DEV_PASS" ]; then mkdir -p android-app/android/app/src/main/assets && node -e "require('fs').writeFileSync('android-app/android/app/src/main/assets/ss-dev.json', JSON.stringify({ devId: process.env.SS_DEV_ID, devPass: process.env.SS_DEV_PASS }))"; echo "written"; else echo "no secrets yet: skipped"; fi
+
       - name: Build the debug APK
         working-directory: android-app/android
         run: |
@@ -70,6 +88,8 @@ jobs:
           retention-days: 1
 
   test:
+    # only for a build that's going out: [build] in the commit message, or Run workflow (see the top)
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[build]')
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:

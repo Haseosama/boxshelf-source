@@ -268,6 +268,7 @@ final class LaunchBoxIndex {
             StringBuilder sb = new StringBuilder(1 << 21);
             int n;
             while ((n = r.read(buf)) > 0) {
+                BoxshelfNativePlugin.stepAside(); // (beta.12) the 500 MB read waits while a game started from Boxshelf runs
                 check();
                 sb.append(buf, 0, n);
                 int pos = 0;

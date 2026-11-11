@@ -83,12 +83,19 @@ async function open(opts){
   $("setup").classList.add("on");$("setup").setAttribute("aria-hidden","false");
   render();
 }
+// shutting: a second B / Esc / Done while the first close is still saving does nothing (it used to find legacyBack
+// already used and put the shelf in charge with Settings still open, or run the wizard's close twice)
+let shutting=false,finishing=false;
 async function close(){
-  if(opening)return;clearTimeout(saveT);await persist();
-  $("setup").classList.remove("on");$("setup").setAttribute("aria-hidden","true");
-  if(legacyBack){const back=legacyBack;legacyBack=null;back();return} // a classic page opened from Settings: back to it
-  Shelf.setMode("browse");await Shelf.refresh(true);if(Shelf.raReload)Shelf.raReload();
+  if(opening||shutting)return;shutting=true;
+  try{clearTimeout(saveT);await persist();
+    $("setup").classList.remove("on");$("setup").setAttribute("aria-hidden","true");
+    if(legacyBack){const back=legacyBack;legacyBack=null;back();return} // a classic page opened from Settings: back to it
+    Shelf.setMode("browse");await Shelf.refresh(true);if(Shelf.raReload)Shelf.raReload();}
+  finally{shutting=false}
 }
+// Settings closing with a classic page still over it: the page just goes (Settings saves the settings they share)
+function dismiss(){if(!legacyBack)return;clearTimeout(saveT);legacyBack=null;$("setup").classList.remove("on");$("setup").setAttribute("aria-hidden","true")}
 async function persist(){try{info.config=await api.saveConfig(cfg)}catch(e){Shelf.toast(e.message)}}
 function changed(){clearTimeout(saveT);saveT=setTimeout(persist,400);renderNav()}
 
@@ -344,7 +351,7 @@ function wzPadStyle(){const p=cfg&&cfg.ui&&cfg.ui.buttons;if(p==="xbox"||p==="ps
 function wzFace(i){const st=wzPadStyle(),g=s=>`<span class="wz-g">${s}</span>`;
   if(st==="ps")return g(`<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="7.4" fill="#1d2130" stroke="rgba(255,255,255,.28)" stroke-width=".6"/>${WZ_PS[i]}</svg>`);
   const [l,c]=st==="nintendo"?[["B","A"][i],"#e9ebf1"]:WZ_XB[i];
-  return g(`<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="7.4" fill="${c}"/><text x="8" y="11.5" text-anchor="middle" font-size="9.5" font-weight="700" font-family="Lexend,Segoe UI,sans-serif" fill="#0b0b0f">${l}</text></svg>`)}
+  return g(`<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="7.4" fill="${c}"/><text x="8" y="11.5" text-anchor="middle" font-size="9.5" font-weight="700" font-family="Mona Sans,Segoe UI,sans-serif" fill="#0b0b0f">${l}</text></svg>`)}
 const WZ_DPAD=`<span class="wz-g"><svg viewBox="0 0 18 18"><rect x="6.3" y=".6" width="5.4" height="6.4" rx="1.3" fill="rgba(255,255,255,.95)"/><rect x="6.3" y="11" width="5.4" height="6.4" rx="1.3" fill="rgba(255,255,255,.95)"/><rect x=".6" y="6.3" width="6.4" height="5.4" rx="1.3" fill="rgba(255,255,255,.38)"/><rect x="11" y="6.3" width="6.4" height="5.4" rx="1.3" fill="rgba(255,255,255,.38)"/><rect x="6.3" y="6.3" width="5.4" height="5.4" fill="rgba(255,255,255,.38)"/></svg></span>`;
 function wzHints(){const ok=window.BS_PAD&&BS_PAD.confirm===1?1:0,kc=t=>`<span class="wz-kc">${t}</span>`,back=step>0||!!(cfg&&cfg.setupDone);
   const H=(pad,key,label)=>`<span class="wz-h"><span class="wz-pad">${pad}</span><span class="wz-key">${key}</span>${label}</span>`;
@@ -356,7 +363,7 @@ addEventListener("bs-padstyle",()=>{try{if(wizard&&$("setup").classList.contains
 // Your consoles: every console plus Steam and the media apps as a card with a tick. On the very first run the ones with
 // an emulator or games found come ticked (pickInit, once); the rest wait under "More consoles". A card that started up top
 // stays there while the wizard is open (pickMain), so cards don't jump under the pointer. Unticked = no shelf.
-let wzPn,wzPnOn=false,emuAutoRan=false,pickDone=false,pickMain=null,pickMore=false,wizLook=null,artWatch=null,searched=false; // searched: Find was pressed (1.82)
+let wzPn,wzRl,wzPnOn=false,emuAutoRan=false,pickDone=false,pickMain=null,pickMore=false,wizLook=null,artWatch=null,searched=false; // searched: Find was pressed (1.82)
 function pickInit(){
   if(!winWizard()||pickDone||(info.config&&info.config.setupDone))return;pickDone=true; // (Android's wizard has its own Consoles page)
   for(const c of info.consoles){const sc=cfg.systems[c.id];if(sc)sc.enabled=pickFound(sc)} // (beta.7) RetroArch alone ticks nothing: it runs 22 consoles
@@ -408,6 +415,11 @@ function pickSection(b){
   if(winWizard()&&api.playniteFind){if(wzPn===undefined){wzPn=null;Promise.resolve(api.playniteFind()).then(f=>{wzPn=f||false;if(f)render()}).catch(()=>{wzPn=false})}
     if(wzPn)b.append(card("","",toggle("Import my Playnite library after setup (experimental)",wzPnOn,v=>{wzPnOn=!!v},"wz-pn"),
       el("div",{class:"hint-text",text:"Your Playnite games come over in one go: games you added by hand onto a Custom shelf, emulated games' folders onto their consoles. You see what's found before anything is added."})))}
+  // (beta.12) RocketLauncher on this PC (HyperSpin's launcher): one switch, off; on starts every console it has a system for
+  // through it (Settings → Consoles has the rest). Nothing shows when it isn't there
+  if(winWizard()&&api.rocketFind){if(wzRl===undefined){wzRl=null;Promise.resolve(api.rocketFind()).then(f=>{wzRl=f||false;if(f)render()}).catch(()=>{wzRl=false})}
+    if(wzRl)b.append(card("","",toggle("Start games through RocketLauncher",!!(cfg.rocket&&cfg.rocket.exe&&cfg.rocket.mode==="all"),v=>{cfg.rocket=cfg.rocket||{exe:"",mode:"off",frontend:""};cfg.rocket.exe=wzRl;cfg.rocket.mode=v?"all":"off";persist()},"wz-rl"),
+      el("div",{class:"hint-text",text:"Found RocketLauncher, HyperSpin's launcher. On: your games start through it, with its fade screens, bezels and pause menu. Off: Boxshelf starts your emulators itself. You can change this any time in Settings → Consoles."})))}
   b.append(el("p",{class:"wz2-foot",text:n?`${n} shel${n===1?"f":"ves"} picked.`:"Nothing picked yet."}));
   if(winWizard())wzInfo={fn:pickInfo,def:main.length?"pick:"+main[0].id:"more"};
 }
@@ -485,7 +497,7 @@ let artChosen=null;
 function artLookSection(b){
   if(artChosen===null&&!(info.config&&info.config.setupDone)&&cfg.ui.autoCovers!==true){
     head(b,"Step 3 of 3","Download box art?","Boxshelf can find the covers, backs, spines, discs and manuals for your games online. To find them it sends your game titles (and GameCube / Wii disc IDs) to LaunchBox, libretro, GameTDB and the Super Mario Wiki. Nothing else about you or your PC is sent.");
-    const yes=()=>{artChosen=true;cfg.ui.autoCovers=true;if(cfg.ui.autoManuals==null)cfg.ui.autoManuals=true;if(!pvTouched&&api.previewFind&&!(window.bsPlatform&&bsPlatform.os==="android"))cfg.ui.previews="shelf"; /* (beta.9: Android previews stay off until chosen) */changed();render()};
+    const yes=()=>{artChosen=true;cfg.ui.autoCovers=true;cfg.ui.autoManuals=true; /* (beta.12: "Turns on box art and manuals" did: a new install's manuals are false, not unset, so they stayed off) */if(!pvTouched&&api.previewFind&&!(window.bsPlatform&&bsPlatform.os==="android"))cfg.ui.previews="shelf"; /* (beta.9: Android previews stay off until chosen) */changed();render()};
     const no=()=>{artChosen=false;cfg.ui.autoCovers=false;cfg.ui.autoManuals=false;changed();stepBy(1)};
     // (beta.11) Windows: the same two answers as Settings rows, the info card says what each one does
     if(winWizard()){b.append(el("div",{class:"wz-rows"},
@@ -1067,7 +1079,7 @@ let pvClipAsked=false;
 function pvClipStart(){if(pvClipAsked)return;if(pvClipOk&&(pvClipAsked=true)&&api.clipHelper&&(cfg.ui.previews||"off")!=="off"&&cfg.ui.previewClips!==false)api.clipHelper().catch(()=>{})}
 async function doneSection(b){
   pvClipStart(); // (beta.8) the console trailer helper, in the background (Settings → Video previews shows how it went)
-  head(b,"All set","Here's your library","You can change any of this later in Settings (press S, or View on the controller: Create on a PlayStation pad, − on a Switch pad).");
+  head(b,"All set","Here's your library",onAndroid()?"You can change any of this later in Settings (press S, or View on the controller: Create on a PlayStation pad, − on a Switch pad).":"You can change any of this later in Settings (press S, or open the quick menu with Menu on the controller and pick Settings)."); /* (beta.12: on Windows / Linux View opens a game's Details) */
   const grid=el("div",{class:"summary-grid"},el("div",{class:"sum"},el("span",{class:"scanning"}),el("span",{text:" Scanning…"})));b.append(grid);
   // Windows: the art was chosen on the Box art page; here its first download shows its progress (covers:auto from
   // main.js autoCovers, which the scan below starts), then points to the Art Studio
@@ -1098,7 +1110,8 @@ async function doneSection(b){
         el("span",{class:"wz2-st"},el("span",{class:"wz-dot "+(ok?"ok":"warn"),"aria-hidden":"true"}),`${ok?"Ready":`${emu} not set`} · ${n} ${w}${n===1?"":"s"}`)))});return}
   shelves.forEach(s=>grid.append(el("div",{class:"sum"},el("b",{text:String(s.games.length)}),el("span",{text:`${s.name} ${s.kind==="apps"?"apps":"games"}`}))));
 }
-async function finish(){pickInit();const hd=applyLook();cfg.setupDone=true;wizard=false;
+async function finish(){if(finishing)return;finishing=true;try{await finishNow()}finally{finishing=false}}
+async function finishNow(){pickInit();const hd=applyLook();cfg.setupDone=true;wizard=false;
   // (beta.10) "Sharpest art": saved first (the consoles you picked must exist for main), then each console's style through api.artStyle, before the shelf's rescan
   if(hd.length&&api.artStyle){clearTimeout(saveT);await persist();for(const id of hd){try{await api.artStyle({systemId:id,style:{preset:"hd",region:"usa",parts:{}}})}catch(e){console.warn("setup: art style",id,e&&e.message)}}}
   await close();if(wzPnOn&&wzPn)setTimeout(()=>{try{Setup.open({page:"addgames"})}catch{}},900)} // (beta.7: then the Playnite import, if ticked) // (1.82) pickInit: done from the sidebar without visiting Your consoles still ticks only the consoles found
@@ -1200,5 +1213,5 @@ const oldOn=()=>$("setup").classList.contains("on");
 function keyR(e){if(newOn())return Settings.key(e);if(!oldOn())return;return key(e)}
 function padR(a){if(newOn()||!oldOn())return;return pad(a)}
 function scrollR(dy){if(newOn()||!oldOn())return;return scroll(dy)}
-window.Setup={open,close,key:keyR,pad:padR,scroll:scrollR,openLegacy,legacyOpen:()=>!!legacyBack,downloads:()=>dlRuns};
+window.Setup={open,close,key:keyR,pad:padR,scroll:scrollR,openLegacy,dismiss,legacyOpen:()=>!!legacyBack,downloads:()=>dlRuns};
 })();

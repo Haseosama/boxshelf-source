@@ -85,9 +85,12 @@ function withBoxshelf(root, o) {
   const mine = e => { const x = String(get(e.v, 'Exe') || ''); return x === exe || /boxshelf[^/]*\.appimage"?$/i.test(x) || get(e.v, 'AppName') === o.name; };
   let ent = L.find(e => e.t === 0 && mine(e)), had = !!ent;
   if (!ent) { ent = { k: String(L.length), t: 0, v: [] }; L.push(ent); }
+  // (beta.12) an entry being updated keeps its Steam id (its artwork, collections and playtime are filed under it)
+  const old = had ? get(ent.v, 'appid') : undefined; if (old != null && old !== 0) { fields[0][2] = old | 0; }
+  const keptId = (fields[0][2] >>> 0);
   for (const [k, t, v] of fields) { const cur = ent.v.find(e => e.k.toLowerCase() === k.toLowerCase()); if (cur) { cur.t = t; cur.v = v; } else ent.v.push({ k, t, v }); }
   if (!ent.v.some(e => e.k.toLowerCase() === 'tags')) ent.v.push({ k: 'tags', t: 0, v: [] });
-  return { root, id, had };
+  return { root, id: had ? keptId : id, had };
 }
 
 // ---------- Steam running? close it, start it again ----------
@@ -97,13 +100,17 @@ function steamRunning() {
   for (const p of pids) { let c = ''; try { c = fs.readFileSync(`/proc/${p}/comm`, 'utf8').trim(); } catch { continue; } if (c === 'steam' || c === 'steamwebhelper') return true; }
   return false;
 }
-const steamCmd = () => { for (const c of ['/usr/bin/steam', '/usr/games/steam']) if (fs.existsSync(c)) return c; return 'steam'; };
+// (beta.12) Steam installed from Flathub has no "steam" command: it's flatpak run com.valvesoftware.Steam
+const steamCmd = () => { for (const c of ['/usr/bin/steam', '/usr/games/steam']) if (fs.existsSync(c)) return [c, []];
+  if (fs.existsSync(path.join(os.homedir(), '.var', 'app', 'com.valvesoftware.Steam')) && fs.existsSync('/usr/bin/flatpak')) return ['/usr/bin/flatpak', ['run', 'com.valvesoftware.Steam']];
+  return ['steam', []]; };
 async function closeSteam() {
-  await new Promise(r => execFile(steamCmd(), ['-shutdown'], { timeout: 15000 }, () => r()));
+  const [c, pre] = steamCmd();
+  await new Promise(r => execFile(c, [...pre, '-shutdown'], { timeout: 15000 }, () => r()));
   for (let i = 0; i < 60 && steamRunning(); i++) await new Promise(r => setTimeout(r, 500));
   return !steamRunning();
 }
-function startSteam() { try { const p = spawn(steamCmd(), [], { detached: true, stdio: 'ignore' }); p.unref(); } catch (e) { log('Steam: could not start it again:', e.message); } }
+function startSteam() { try { const [c, pre] = steamCmd(); const p = spawn(c, pre, { detached: true, stdio: 'ignore' }); p.on('error', () => {}); p.unref(); } catch (e) { log('Steam: could not start it again:', e.message); } }
 
 // ---------- Add Boxshelf to Steam ----------
 // o: { exe (the AppImage), iconSrc (Boxshelf's icon, copied beside the data), dataDir, closeSteam (true: close it first and
@@ -125,8 +132,12 @@ async function addToSteam(o) {
       if (fs.existsSync(f)) { const buf = fs.readFileSync(f); root = buf.length ? parse(buf) : []; fs.copyFileSync(f, f + '.boxshelf-bak'); }
       const r = withBoxshelf(root, { exe: o.exe, name: 'Boxshelf', icon, launch: '' });
       const tmp = f + '.part'; fs.writeFileSync(tmp, write(r.root)); fs.renameSync(tmp, f);
-      // the Library's artwork: Boxshelf's icon as the tile, until a proper one is chosen in Steam
-      try { const grid = path.join(u.dir, 'grid'); fs.mkdirSync(grid, { recursive: true }); if (icon) for (const n of [r.id + '_icon.png']) fs.copyFileSync(icon, path.join(grid, n)); } catch {}
+      // the Library's artwork: (beta.12) the cover, the wide tile, the hero, the logo and the icon (a blank tile in Game Mode
+      // before); a picture already there that isn't ours (one chosen in Steam) is kept
+      try { const grid = path.join(u.dir, 'grid'); fs.mkdirSync(grid, { recursive: true }); const art = path.join(__dirname, 'steam-art');
+        const put = (src, n) => { if (!src || !fs.existsSync(src)) return; const dst = path.join(grid, n); try { if (fs.existsSync(dst) && !fs.readFileSync(dst).equals(fs.readFileSync(src))) return; } catch {} fs.copyFileSync(src, dst); };
+        put(icon, r.id + '_icon.png'); put(path.join(art, 'boxshelf-portrait.png'), r.id + 'p.png'); put(path.join(art, 'boxshelf-wide.png'), r.id + '.png');
+        put(path.join(art, 'boxshelf-hero.png'), r.id + '_hero.png'); put(path.join(art, 'boxshelf-logo.png'), r.id + '_logo.png'); } catch {}
       done.push(u.id); if (r.had) updated++;
       // (beta.10: the account number stays out of the log, which goes into problem reports: "Steam user 1 of 2")
       log('Steam: Boxshelf', r.had ? 'updated in' : 'added to', 'the shortcuts of Steam user', (users.indexOf(u) + 1) + ' of ' + users.length);
@@ -136,8 +147,11 @@ async function addToSteam(o) {
   return done.length ? { ok: true, users: done.length, updated: updated > 0, reopened } : { ok: false, why: 'write-failed' };
 }
 // already in Steam? (any account's shortcuts list has it)
+// (beta.12) and its program is still there: a shortcut left pointing at an older version's file counts as not added, so
+// Settings offers Add to Steam again (which updates that same entry to the fixed Boxshelf.AppImage link)
 function inSteam(exe) {
-  for (const u of userDirs()) { try { const L = parse(fs.readFileSync(path.join(u.dir, 'shortcuts.vdf'))); const top = L.find(e => e.k.toLowerCase() === 'shortcuts'); if (top && top.v.some(e => e.t === 0 && (String(get(e.v, 'Exe') || '') === '"' + exe + '"' || /boxshelf[^/]*\.appimage"?$/i.test(String(get(e.v, 'Exe') || ''))))) return true; } catch {} }
+  const there = x => { const p = String(x || '').replace(/^"(.*)"$/, '$1'); try { return !!p && fs.statSync(p).isFile(); } catch { return false; } };
+  for (const u of userDirs()) { try { const L = parse(fs.readFileSync(path.join(u.dir, 'shortcuts.vdf'))); const top = L.find(e => e.k.toLowerCase() === 'shortcuts'); if (top && top.v.some(e => { if (e.t !== 0) return false; const x = String(get(e.v, 'Exe') || ''); return (x === '"' + exe + '"' || /boxshelf[^/]*\.appimage"?$/i.test(x)) && there(x); })) return true; } catch {} }
   return false;
 }
 

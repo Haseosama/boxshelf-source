@@ -150,7 +150,7 @@ body.bs-still .sel-halo,body.bs-still .theme-fx i{animation-play-state:paused}
    max-width:760px) keep their own two-row layout, where the bar gets a full row of its own. */
 @media (min-width:761px){
   .platform-android .hud-top{grid-template-columns:minmax(0,1fr) auto minmax(0,1fr)}
-  .platform-android .hud-top>.tabs{max-width:52vw}
+  .platform-android .hud-top>.tabs{max-width:44vw} /* (beta.12: 52vw left the bigger clock no room at a 1280-1024 px layout) */
 }
 
 /* Box art progress card (android-api.js, card): a small dark note in the corner while art downloads. Fixed, on its own
@@ -166,3 +166,173 @@ body.bs-still .sel-halo,body.bs-still .theme-fx i{animation-play-state:paused}
 .bs-artcard .ac-t{margin-top:3px;height:17px;font-weight:500;font-size:12.5px;opacity:.62;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bs-artcard .ac-bar{margin-top:8px;height:3px;border-radius:2px;background:rgba(255,255,255,.12);overflow:hidden}
 .bs-artcard .ac-bar i{display:block;height:100%;border-radius:2px;background:linear-gradient(90deg,#7fa8ff,#b6cbff);transform-origin:0 50%;transform:scaleX(0);transition:transform .4s ease}
+
+/* (beta.12) the Thor's narrower screen: Mona Sans titles a little less wide than on a TV */
+.sys-word,.g-title,.l-title,.d-title,.bss-title,.su-title{font-stretch:112.5%}
+
+/* (beta.12) Readable at arm's length. The page is laid out 1024-1440 px wide (Text size) and scaled to the screen, so on a
+   6" handheld 1 px is under 0.1 mm: the shelf's and Details' small labels (9-14 px, sized for a TV across the room) were
+   too small to read. Sizes only: nothing here moves while the shelf slides, so no frame costs more. */
+.platform-android .wm-tag{font-size:13px}
+.platform-android #sysCount{font-size:15px}
+.platform-android #menuBtn{font-size:15px}
+.platform-android .tab-strip .tab{font-size:16px}
+.platform-android .g-meta,.platform-android .g-meta span{font-size:16px}
+.platform-android #clock{font-size:16px}.platform-android #clock b,.platform-android .clock b{font-size:18px}
+.platform-android #counter,.platform-android .counter b{font-size:17px}
+.platform-android .hint .lab,.platform-android .hint>span:not(.g){font-size:15px}
+.platform-android .hint .g,.platform-android .keys .g{font-size:13px}
+.platform-android #toast{font-size:17px}
+/* Details */
+.platform-android #dKicker,.platform-android #dSecInfo,.platform-android .d-adv>summary{font-size:14px}
+.platform-android .d-chips .chipx{font-size:14px}
+.platform-android .details .btn>span,.platform-android .d-tabs>button{font-size:15px}
+.platform-android .details dt{font-size:14px}.platform-android .details dd{font-size:16px}
+.platform-android #dDesc{font-size:17px;line-height:1.5}
+.platform-android #dPlay{font-size:17px}
+/* (with readable labels the buttons don't fit one row on a handheld: Play gets its own row, the others share the next,
+   rather than the last ones going off the panel) */
+.platform-android .details .d-actions{flex-wrap:wrap!important}
+.platform-android .details .d-actions #dPlay{flex:1 1 100%;min-height:56px}
+.platform-android .details .d-actions .d-ico{flex:1 1 0;min-width:0;min-height:52px;padding:0 10px;white-space:nowrap}
+/* Settings */
+.platform-android .bss-ver{font-size:16px}
+/* setup's Consoles page: a little tighter, so the cards and "More consoles" fit a 1280 px (720 tall) layout unscrolled */
+.platform-android .con-grid.hub{gap:8px;margin-top:10px}
+.platform-android .con-card.big{min-height:92px;padding:12px 18px 10px;gap:2px}
+.platform-android .con-more{margin-top:10px;padding:13px 22px}
+
+/* (0.5) Phones, tablets and foldables held upright (or a narrow split-screen window). android-early.js lays a tall or
+   narrow window out 360-756 CSS px wide (about 1.15 px per dp), so the app's own narrow layout (style.css max-width:760px)
+   applies; the rules below finish it for a touch screen: one column everywhere, readable sizes (16+ px for anything you
+   read, 13+ px for small capitals), 44+ px touch targets, clear of the notch and the gesture bar. A landscape window is
+   always 1024 px or wider, so none of this ever reaches the Thor or a landscape phone or tablet. Nothing here changes
+   while the shelf slides: sizes and places only, plus the quick menu's slide direction (a transform, as before). */
+@media (max-width:760px){
+  /* the shelf: the console bar a little roomier for a finger, the hint bar wraps into tidy lines above the gesture bar */
+  .platform-android .tab-strip .tab{padding:8px 15px}
+  .platform-android .hud-top>.tabs{max-width:100%;justify-self:stretch}
+  /* the header keeps one height whatever the console (so the console bar under it never jumps): the console's name and
+     its kind on one line each, cut short with "…" if they're too long; the controller icon makes room for them */
+  .platform-android .hud-top>.brand{min-width:0;max-width:100%;overflow:hidden}
+  .platform-android .hud-top>.brand .wm-main,.platform-android .hud-top>.brand .wm-tag,.platform-android .hud-top>.brand .sys-count{display:block;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .platform-android .hud-top>.brand .wm-main{font-size:20px}
+  .platform-android .hud-top>.brand .wm-tag{letter-spacing:.14em}
+  .platform-android .hud-top #padStat{display:none}
+  .platform-android #app>.hints{max-width:calc(100% - 24px)}
+  .platform-android .hint{padding:6px 8px}
+  .platform-android #toast{max-width:calc(100% - 32px);white-space:normal;text-align:center;border-radius:18px;line-height:1.35;padding:10px 18px}
+  /* the box art progress card: across the foot of the screen, above the hint bar */
+  .platform-android .bs-artcard{left:12px;right:12px;width:auto;bottom:calc(env(safe-area-inset-bottom,0px) + 150px);font-size:16px}
+  .platform-android .bs-artcard .ac-n{font-size:15px}
+  .platform-android .bs-artcard .ac-t{font-size:15px;height:20px}
+
+  /* Details: a sheet over the lower part of the screen, one column; the console bar steps out of the case's way */
+  .platform-android #app.details-open .hud-top>.tabs{opacity:0;pointer-events:none}
+  /* (it ends above the hint bar, so nothing of it is ever under the bar) */
+  .platform-android .details{top:40%;bottom:calc(env(safe-area-inset-bottom,0px) + 116px);border-bottom:1px solid rgba(255,255,255,.08)}
+  .platform-android #app:not(.launching).details-open #scene{transform:translateY(-25vh) scale(.6)}
+  .platform-android .details .d-x{position:absolute;top:10px;right:14px;z-index:2;width:44px;height:44px;border-radius:50%;padding:0;display:grid;place-items:center;
+    border:1px solid rgba(255,255,255,.2);background:rgba(10,12,20,.55);color:#f3f5fb;font-size:17px}
+  .platform-android .details .d-hero-row{padding-right:44px}
+  .platform-android #dKicker,.platform-android .d-chips .chipx,.platform-android .details dt,.platform-android #dSecInfo,.platform-android .d-adv>summary{font-size:15px}
+  .platform-android .details .d-stat span{font-size:13px}
+  .platform-android .details .d-stat b{font-size:16px}
+  .platform-android #dCmd{font-size:14px}
+  .platform-android .details .d-actions #dPlay{flex:1 1 100%!important;font-size:18px}
+  .platform-android .details .d-actions .d-ico{flex:1 1 auto!important;min-height:52px;padding:0 12px}
+  .platform-android #app.details-open>.hints{z-index:12}
+  .platform-android .details .d-tabs>button{min-height:44px;font-size:16px}
+
+  /* the museum: its caption across the screen and readable, its button bar full size, wrapping, under the caption */
+  .platform-android .mus-hud{max-width:calc(100% - 32px);bottom:calc(env(safe-area-inset-bottom,0px) + 124px)}
+  .platform-android .mus-kicker{font-size:13px}
+  .platform-android .mus-title{font-size:26px}
+  .platform-android .mus-meta{font-size:15px}
+  .platform-android .mus-hints{transform:translateX(-50%);max-width:calc(100% - 24px);bottom:max(14px,calc(env(safe-area-inset-bottom,0px) + 10px))}
+  /* the achievements screen: solid, so the shelf's header doesn't show through behind its own */
+  .platform-android .achv{background:rgb(6,7,12)}
+
+  /* the quick menu: a sheet from the bottom instead of a panel from the right (it keeps its 1.25 zoom, so its own sizes are
+     divided by it); the shelf stays put under it */
+  .platform-android .qm{top:auto;left:0;right:0;bottom:0;width:auto;height:calc(78vh / 1.25);border-left:0;border-top:1px solid rgba(255,255,255,.09);
+    border-radius:16px 16px 0 0;padding:14px 14px 0;transform:translateY(104%)}
+  .platform-android #app.qm-open .qm{transform:none}
+  .platform-android #app.qm-open:not(.launching) #scene{transform:translateY(-14vh) scale(.8)}
+  .platform-android #app.qm-open:not(.launching) .sel-halo{transform:translate(-50%,calc(-50% - 14vh)) scale(.8)}
+  .platform-android #app.qm-open .info{transform:none}
+  .platform-android .qm-kick,.platform-android .qm-gm,.platform-android .qm-val,.platform-android .qm-num,.platform-android .qm-act,.platform-android .qm-opt,.platform-android .qm-note{font-size:13px}
+  .platform-android .qm-ll,.platform-android .qm-swname,.platform-android .qm-ts{font-size:12px}
+  .platform-android .qm-hints{margin-bottom:max(14px,calc(env(safe-area-inset-bottom,0px) / 1.25 + 6px));flex-wrap:wrap;justify-content:center}
+
+  /* Settings: its stage at 0.8 (it was fitted to a 1100 px page, far too small on a phone) */
+  .platform-android #bss .bss-stage{transform:scale(.8)!important;width:125vw!important;height:125vh!important}
+  .platform-android #bss .bss-root .bss-side{padding:max(30px,calc(env(safe-area-inset-top,0px) * 1.25 + 12px)) 0 110px 22px}
+  .platform-android #bss .bss-root .bss-page{padding:max(30px,calc(env(safe-area-inset-top,0px) * 1.25 + 12px)) 28px calc(env(safe-area-inset-bottom,0px) * 1.25 + 120px) 28px}
+  .platform-android #bss .bss-title{font-size:36px}
+  .platform-android #bss .bss-lead{font-size:19px;-webkit-line-clamp:2}
+  .platform-android #bss .bss-head{font-size:16px}
+  .platform-android #bss .bss-row .sub{font-size:18.5px}
+  .platform-android #bss .bss-row .desc{font-size:19.5px}
+  .platform-android #bss .bss-root .bss-hints{bottom:calc(env(safe-area-inset-bottom,0px) * 1.25 + 20px);flex-wrap:wrap}
+  .platform-android #bss .bss-pill{flex-wrap:wrap;justify-content:center;max-width:100%;row-gap:4px}
+  .platform-android #bss .bss-ctile em{font-size:17px}
+  /* Theme: fewer, bigger tiles a line, so every name is readable */
+  .platform-android #bss .bss-row>.bss-tiles{grid-template-columns:repeat(6,minmax(0,1fr))}
+  .platform-android #bss .bss-row>.bss-tiles .bss-tile{height:76px}
+  .platform-android #bss .bss-row>.bss-tiles .bss-tile span{font-size:16.5px;padding:14px 8px 6px}
+}
+/* a tall page (a phone or tablet upright): the shelf sits a little lower, so the cases and the game's name fill the
+   middle of the screen rather than leaving a gap over the hint bar (app.js measure() also draws the cases bigger on a
+   tall Android page) */
+@media (max-width:760px) and (max-aspect-ratio:5/7){
+  .platform-android #scene{perspective-origin:50% 46%}
+  .platform-android #track,.platform-android .sel-halo{top:46%}
+  .platform-android .floor{top:calc(46% + var(--bh)/2 - 10px)}
+  .platform-android .info{top:calc(46% + var(--bh)/2 + 6vh)}
+}
+/* Settings upright (a phone, a tablet, a foldable): one column. The sections are a block of buttons over the page (they
+   wrap, so every one stays in sight, its name whole, and in reach of the controller's up / down and a finger) */
+@media (max-width:760px){
+  .platform-android #bss .bss-root,.platform-android #bss .bss-root.narrow,.platform-android #bss .bss-root.studio,.platform-android #bss .bss-root.studio.narrow{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}
+  .platform-android #bss .bss-root .bss-side{flex-direction:row;flex-wrap:wrap;align-content:flex-start;gap:8px;overflow:visible;padding:max(22px,calc(env(safe-area-inset-top,0px) * 1.25 + 10px)) 22px 16px;
+    border-right:0;border-bottom:1px solid rgba(255,255,255,.07)}
+  .platform-android #bss .bss-brand,.platform-android #bss .bss-ver{display:none}
+  .platform-android #bss .bss-root .bss-search{flex:0 0 auto;height:48px;margin:0;padding:0 16px;font-size:20px}
+  .platform-android #bss .bss-search .q{max-width:260px}
+  .platform-android #bss .bss-root .bss-nav{flex:0 0 auto;height:48px;margin:0;padding:0 14px;gap:9px;font-size:20px}
+  .platform-android #bss .bss-nav svg{width:22px;height:22px}
+  .platform-android #bss .bss-nav .badge,.platform-android #bss .bss-nav .dot{margin-left:2px}
+  .platform-android #bss .bss-nav.on::before{left:14px;right:14px;top:auto;bottom:4px;width:auto;height:3px}
+  .platform-android #bss .bss-root .bss-page{padding-top:20px;padding-left:22px;padding-right:22px}
+  .platform-android #bss .bss-title{white-space:normal}
+  .platform-android #bss .bss-root .bss-hints,.platform-android #bss .bss-root .bss-osk{left:22px;right:22px}
+  .platform-android #bss .bss-root .bss-hints{justify-content:center}
+  .platform-android #bss .bss-root .bss-row{gap:14px;padding:10px 16px}
+  .platform-android #bss .bss-root .bss-val .txt{min-width:0}
+}
+/* a tablet upright: its hint bar is one line, so Details reaches lower */
+@media (min-width:601px) and (max-width:760px){
+  .platform-android .details{bottom:calc(env(safe-area-inset-bottom,0px) + 86px)}
+}
+/* a phone: two consoles and four themes a line */
+@media (max-width:600px){
+  .platform-android #bss .bss-root .bss-consoles{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .platform-android #bss .bss-row>.bss-tiles{grid-template-columns:repeat(4,minmax(0,1fr))}
+}
+
+/* (beta.12) the smoothness test's results (app.js smoothCard): a card in the middle, a row per round */
+#smoothCard{position:fixed;inset:0;z-index:9000;display:grid;place-items:center;background:rgba(4,4,10,.55)}
+#smoothCard .sc-box{min-width:min(620px,92vw);max-width:92vw;padding:22px 26px;border-radius:22px;background:rgba(18,18,30,.97);box-shadow:0 20px 60px rgba(0,0,0,.6);display:flex;flex-direction:column;gap:10px;font-family:'Mona Sans',system-ui,sans-serif;color:#f3f5fb}
+#smoothCard b{font-size:22px;font-weight:600}
+#smoothCard small{font-size:15px;color:rgba(243,245,251,.55)}
+#smoothCard .sc-row{display:grid;grid-template-columns:1fr auto;column-gap:16px;padding:10px 0;border-top:1px solid rgba(255,255,255,.08)}
+#smoothCard .sc-row span{font-size:17px}
+#smoothCard .sc-row em{font-style:normal;font-size:16px;font-weight:600;text-align:right}
+#smoothCard .sc-row i{grid-column:1/-1;font-style:normal;font-size:15px;color:rgba(243,245,251,.6)}
+#smoothCard em.ok{color:#7ee2a8}#smoothCard em.meh{color:#ffd98a}#smoothCard em.bad{color:#ff8a8a}
+/* (beta.12) the manual reader on Android: the page gets the screen's height (the game's big title steps aside while
+   reading; the page line and the hints stay under the page) */
+.platform-android .inspect.reading{--rd-foot:110px}
+.platform-android .inspect.reading .rd-book{margin-top:2vh;height:calc(100vh - 3vh - var(--rd-foot,110px))}
+.platform-android .inspect.reading .isp-title{display:none}

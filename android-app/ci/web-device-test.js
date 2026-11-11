@@ -23,7 +23,8 @@
 //   Pass 14 "box art screens": the Box art page, games grid and game page (ci/artui-test.js).
 //   Pass 15 "beta": new-install defaults, beta version order, the update notice and Settings rows (ci/beta-test.js).
 //   Pass 16 "pcgames": Epic's installs, Quiver Launcher 3 / 4, games added by hand, the Custom shelf (ci/pcgames-test.js).
-//   Pass 17 "screens": the Android build on a 20:9 phone, a small phone and a 16:10 tablet (ci/screens-test.js).
+//   Pass 17 "screens": the Android build on a 20:9 phone, a small phone and a 16:10 tablet (ci/screens-test.js), then
+//          phones, tablets and foldables in portrait and landscape, rotation, the Thor's layout unchanged (ci/portrait-test.js).
 //   Pass 18 "retro": the 12 retro shelves (PlayStation … Dreamcast) through RetroArch or a standalone (ci/retro-test.js).
 //   Pass 19 "library": Details in Settings' look, filters from the library itself, collections as shelves (ci/library-test.js).
 //   Pass 20 "setup": the beta.7 consoles, arcade names, Set up for me, and a tidy first run with RetroArch (ci/setup-test.js).
@@ -82,13 +83,24 @@ server.listen(0, async () => {
   // (a game launched by itself mid-check). The GitHub machines have none, so this only makes local runs match them.
   { const noPads = () => { try { Object.defineProperty(Navigator.prototype, 'getGamepads', { configurable: true, value: () => [null, null, null, null] }); } catch (e) {} };
     const nc = browser.newContext.bind(browser);
-    browser.newContext = async o => { const c = await nc(o); await c.addInitScript(noPads); return c; };
+    // (beta.12) BS_SLOW=4 slows every page's processor that much, to see locally what GitHub's slower machines see
+    const slow = +process.env.BS_SLOW || 0;
+    const throttle = async p => { if (!global.__slowOn) return; try { const s = await p.context().newCDPSession(p); await s.send('Emulation.setCPUThrottlingRate', { rate: slow }); } catch (e) {} };
+    // (beta.12) a pretend controller's button pressed for the app's frames, not a fixed time: Boxshelf reads a pad once a
+    // drawn frame, and GitHub's software drawing can take most of a second a frame, so a 140 ms tap was never seen and a
+    // held button was seen once. A tap is held for exactly one frame; a hold (400 ms and up) for its time and one frame more
+    const padHold = () => { window.__padHold = async (pad, i, ms) => {
+      const fr = () => new Promise(r => requestAnimationFrame(() => r())), set = p => { pad.buttons[i] = { pressed: p, touched: p, value: p ? 1 : 0 }; pad.timestamp = (pad.timestamp || 0) + 1; };
+      ms = ms || 120; set(true); const t0 = performance.now(); await fr(); const left = ms - (performance.now() - t0); if (left > 0) await new Promise(r => setTimeout(r, left));
+      if (ms >= 400) await fr(); set(false); await fr(); }; };
+    browser.newContext = async o => { const c = await nc(o); await c.addInitScript(noPads); await c.addInitScript(padHold); if (slow > 1) c.on('page', throttle); return c; };
     browser.newPage = async o => { const c = await browser.newContext(o), p = await c.newPage(); const close = p.close.bind(p); p.close = async a => { await close(a); await c.close().catch(() => {}); }; return p; }; }
   try {
     { const p = await browser.newPage({ viewport: { width: 360, height: 512 } }); // four plain test covers (no network in the test)
       for (let i = 0; i < 4; i++) { await p.setContent(`<body style="margin:0;background:hsl(${i * 90 + 20},60%,38%);font:bold 54px sans-serif;color:#fff;display:grid;place-items:center;height:512px">TEST ART ${i}</body>`);
         ART[`/__art/${i}.jpg`] = await p.screenshot({ type: 'jpeg', quality: 80 }); }
       await p.close(); }
+    global.__slowOn = true; // (BS_SLOW: the passes from here on; the test covers above are drawn at full speed)
     if (runs('thor')) { // ===== group thor: passes 1-9 =====
     // ---------- pass 1: real bridge, fresh install ----------
     { const { ctx, page, errors, logs } = await newPage(browser, NATIVE_STANDIN + BRIDGE + HEADERS);
@@ -98,7 +110,7 @@ server.listen(0, async () => {
       await page.screenshot({ path: path.join(OUT, '1-fresh-install.png') });
       check('Android code starts on the device (real Capacitor bridge)', /^active/.test(st.status), st.status || 'no status');
       check('Fresh install opens the setup wizard', st.wizard && /setup not done/.test(st.status), st.wizard ? 'wizard shown' : 'no wizard');
-      check('Platform is android, layout 1440 px wide', st.os === 'android' && st.w === 1440, `${st.os}, ${st.w}px`);
+      check('Platform is android, layout 1280 px wide (beta.12: Automatic text size on a handheld)', st.os === 'android' && st.w === 1280, `${st.os}, ${st.w}px`);
       check('Talks to the native side', st.calls > 0, st.calls + ' calls');
       // this stand-in has no second screen: the shelf must not send the bottom screen anything (no wasted work per game)
       const bpost = await page.evaluate(() => (window.__calls || []).filter(c => /bottomPost/.test(c)).length);
@@ -180,6 +192,9 @@ server.listen(0, async () => {
         const c = (await api.getConfig()).config, snes = c.systems.snes.romDirs.slice(), uri = (window.BS_FOLDERS() || {})[snes[0]]; window.__fakeReleased = [];
         c.systems.snes.romDirs = []; await api.saveConfig(c); await wait(50); out.released = (window.__fakeReleased || []).includes(uri);
         c.systems.snes.romDirs = snes; await api.saveConfig(c); await api.scan(); // (put back for the rest of the pass)
+        const gcN = lib => ((lib || []).find(s => s.id === 'gc') || { games: [] }).games.length, nGc = gcN(await api.cachedLibrary());
+        window.__fakeListFail = true; const lost = await api.scan().catch(() => null); window.__fakeListFail = false;
+        out.unread = [nGc, gcN(lost), gcN(await api.cachedLibrary())]; await api.scan();
         const said = [], t0 = Shelf.toast; Shelf.toast = m => { said.push(String(m)); return t0(m); }; // (what the shelf was asked to say, whatever else says something after)
         window.__fakePersistFail = true; window.__fakePickNext = 'primary:ROMs/gc'; out.pick = await api.pick({ kind: 'folder' }); await wait(100);
         Shelf.toast = t0; out.warn = said.join(' | ');
@@ -190,6 +205,8 @@ server.listen(0, async () => {
         fx.same && Array.isArray(fx.renamed) && fx.renamed[0] === 'My Zelda' && /Wind Waker/.test(fx.renamed[1] || ''), JSON.stringify({ same: fx.same, renamed: fx.renamed }));
       check('Android: Rename keeps the name (a later settings save doesn\'t undo it) and "back to the file\'s name" undoes it',
         fx.kept && fx.kept.title === 'My Zelda' && /Wind Waker/.test(fx.back[0]) && fx.back[1] === null, JSON.stringify({ kept: fx.kept, back: fx.back }));
+      check('Android: a games folder that can\'t be read (permission lost, SD card out) keeps its games on the shelf and in the saved library',
+        Array.isArray(fx.unread) && fx.unread[0] > 0 && fx.unread[1] === fx.unread[0] && fx.unread[2] === fx.unread[0], JSON.stringify(fx.unread));
       check('Android: a games folder removed in Settings gives its permission back; a pick Android won\'t keep says so', fx.released && /keep access to that folder/.test(fx.warn) && !!fx.pick,
         JSON.stringify({ released: fx.released, warn: fx.warn.slice(0, 80), pick: fx.pick }));
 
@@ -252,7 +269,7 @@ server.listen(0, async () => {
         for (let i = 0; i < 20; i++) { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })); await wait(120); }
         on = false; out.worst = Math.round(worst); return out;
       });
-      check('Pixel ratio matches the scaled layout (1920 / 1440)', Math.abs(pf.dpr - 1920 / 1440) < .02 && pf.real > 2, `page ${pf.dpr}x, device ${pf.real}x`);
+      check('Pixel ratio matches the scaled layout (1920 / 1280)', Math.abs(pf.dpr - 1920 / 1280) < .02 && pf.real > 2, `page ${pf.dpr}x, device ${pf.real}x`);
       // this runner draws in software, where Automatic correctly picks Low; on the Thor's GPU it picks Handheld
       const want = /software/.test(pf.why) ? 'low' : 'handheld';
       check('Automatic performance level for Android, effects mode off', pf.level === want && !pf.fx, `${pf.level} (${pf.why}), effects ${pf.fx ? 'on' : 'off'}`);
@@ -313,8 +330,8 @@ server.listen(0, async () => {
         Shelf.quickMenu(); for (let i = 0; i < 20 && !Shelf._qs().open; i++) await wait(150); await wait(300);
         const seq = [...document.querySelectorAll('.qm-list > *')].filter(e => !e.classList.contains('qm-hl') && !e.classList.contains('qm-acts')).map(e => e.classList.contains('qm-sep') ? '|' : ((e.querySelector('.qm-lbl') || {}).textContent || '').trim()).filter(Boolean); // (a row's sub-panel has no label of its own)
         const first = Shelf._qs().id; Shelf.homeButton(); await wait(400); return { seq: seq.join(','), first }; });
-      check('Quick menu (Thor): Museum, Art Studio, Trophies on top; then Customize, Assets, Sounds, Volume, Sort; the highlight starts on Museum',
-        /^Museum,Art Studio,Trophies,\|,Customize,Assets,Sounds,Volume,Sort & filter,\|,Settings,Power$/.test(qmo.seq) && qmo.first === 'mus', JSON.stringify(qmo));
+      check('Quick menu (Thor): Find a game, Museum, Art Studio, Trophies on top; then Customize, Assets, Sounds, Volume, Sort; the highlight starts on Museum',
+        /^Find a game,Museum,Art Studio,Trophies,\|,Customize,Assets,Sounds,Volume,Sort & filter,\|,Settings,Power$/.test(qmo.seq) && qmo.first === 'mus', JSON.stringify(qmo));
 
       await page.keyboard.press('s'); await page.waitForTimeout(2000); await page.keyboard.type('home'); await page.waitForTimeout(1200);
       const text = await page.evaluate(() => document.body.innerText);
@@ -428,7 +445,7 @@ server.listen(0, async () => {
           for (let i = 0; i < 40; i++) { const l = [...(window.__fakeBottom || [])].reverse().find(m => m.type === 'museum'); if (l && l.row.sel >= 0) break; await wait(250); } });
         await page.waitForTimeout(800);
         mus = await page.evaluate(() => { const msgs = window.__fakeBottom || [], last = [...msgs].reverse().find(m => m.type === 'museum'), r = window.Museum && Museum.bottomRow && Museum.bottomRow();
-          return { mode: Shelf.getMode(), types: msgs.map(m => m.type[0]).join(''), msg: !!last, games: last ? last.games.length : 0, sel: last ? last.row.sel : null, n: r ? r.boxes.length : 0, title: last && last.game ? last.game.title : '' }; });
+          return { mode: Shelf.getMode(), types: msgs.map(m => m.type[0]).join(''), msg: !!last, games: last ? last.games.length : 0, sel: last ? last.row.sel : null, n: r ? r.boxes.length : 0, title: last && last.game ? last.game.title : '', hud: last && last.hud ? last.hud.title || '' : '' }; });
         Object.assign(mus, await fr.evaluate(() => { const s = bsBottom.state(); return { on: s.museum, items: s.mitems, shown: s.mtitle }; }));
         const to = mus.n > 1 ? (mus.sel === 1 ? 0 : 1) : -1;
         if (to >= 0) { await fr.evaluate(i => { const b = document.querySelector(`.mi[data-i="${i}"]`); const r = b.getBoundingClientRect(), o = { bubbles: true, pointerId: 7, clientX: r.x + r.width / 2, clientY: r.y + r.height / 2 };
@@ -487,7 +504,8 @@ server.listen(0, async () => {
         for (let i = 0; i < 4 && await page.evaluate(() => Shelf.getMode() === 'museum'); i++) { await page.keyboard.press('Escape'); await page.waitForTimeout(900); }
         await page.waitForTimeout(1500); mus.after = await fr.evaluate(() => bsBottom.state().museum); mus.modeAfter = await page.evaluate(() => Shelf.getMode());
       }
-      check('Bottom page becomes the museum\'s companion (its row, the chosen case)', mus.mode === 'museum' && mus.msg && mus.games > 0 && mus.on && mus.items === mus.games && mus.shown === mus.title, JSON.stringify(mus).slice(0, 180));
+      // (the museum can open on a row with no case chosen yet: then the companion shows the row's own words, as the wall does)
+      check('Bottom page becomes the museum\'s companion (its row, the chosen case)', mus.mode === 'museum' && mus.msg && mus.games > 0 && mus.on && mus.items === mus.games && !!mus.shown && mus.shown === (mus.sel >= 0 ? mus.title : mus.hud), JSON.stringify(mus).slice(0, 300));
       check('Museum fast scroll: no cover loads and at most one upload a frame while racing; covers load once it rests', !!mus.race && mus.race.rn > 0 && mus.race.rFr === 0 && mus.race.rUp <= 1 && mus.race.pending === 0, JSON.stringify(mus.race));
       check('Bottom page: a touch chooses a case on the wall; Unwrap unwraps it there too', mus.n > 1 && mus.picked === (mus.sel === 1 ? 0 : 1) && mus.wasSealed && !mus.nowSealed && !mus.frameSealed, `picked ${mus.picked}, sealed ${mus.wasSealed} → ${mus.nowSealed} (bottom ${mus.frameSealed})`);
       check('Bottom page: the case in your hands stays chosen there', mus.held && mus.held.held && mus.held.sel === mus.picked && mus.heldCard, JSON.stringify(mus.held) + ', card ' + mus.heldCard);
@@ -878,9 +896,9 @@ server.listen(0, async () => {
         bsBottom.recv(JSON.stringify({ type: 'game', game: g })); await wait(900);
         out.title = (q('.txt.in .title') || {}).textContent; out.cover = !!q('.case .f-front img'); out.sys = q('#sysName').textContent;
         q('#artBtn').click(); await wait(500); // Box art: opens the Art Studio up top, this page stays on the case
-        out.art = q('.view.on').dataset.v === 'case' && q('#artBtn').classList.contains('tab') && !q('.tab[data-tab="details"]') && !q('.qk[data-cmd="art"]');
+        out.art = q('.view.on').dataset.v === 'case' && q('#artBtn').classList.contains('qk') && !q('.tab[data-cmd="art"]') && document.querySelectorAll('.tab').length === 5; // (beta.12: under Play on the Game tab; five tabs)
         q('.tab[data-tab="trophies"]').click(); await wait(400); out.trophies = q('.view.on').dataset.v === 'trophies' && /23\/40/.test(q('#trophies').textContent);
-        q('.tab[data-tab="more"]').click(); await wait(400); out.more = q('.view.on').dataset.v === 'more' && document.querySelectorAll('#more .tile').length === 6;
+        q('.tab[data-tab="more"]').click(); await wait(400); out.more = q('.view.on').dataset.v === 'more' && document.querySelectorAll('#more .tile:not(.add)').length === 7 && !!q('#more .tile.add');
         q('#more .tile[data-cmd="shuffle"]').click();
         q('.tab[data-tab="case"]').click(); await wait(500);
         q('.play').click();
@@ -900,7 +918,11 @@ server.listen(0, async () => {
         await wait(40); return bsBottom.state(); });
       await page.waitForTimeout(2500); const flick2 = await page.evaluate(() => bsBottom.state());
       // (0.3.2) a tap on the closed case only brings it in close (Inspect); a second tap opens it
-      const caseAt = () => page.evaluate(() => { const b = [...document.querySelectorAll('.case')].pop().getBoundingClientRect(); return [b.x + b.width / 2, b.y + b.height / 2]; });
+      // (a point on the case itself: after a flick it can rest at a steep angle, where the middle of its outline falls
+      // between two faces, on the scene behind it)
+      const caseAt = () => page.evaluate(() => { const c = [...document.querySelectorAll('.case')].pop(), b = c.getBoundingClientRect();
+        for (const fx of [.5, .4, .6, .3, .7, .2, .8]) for (const fy of [.5, .4, .6]) { const x = b.x + b.width * fx, y = b.y + b.height * fy, el = document.elementFromPoint(x, y); if (el && el.closest('.case') === c) return [x, y]; }
+        return [b.x + b.width / 2, b.y + b.height / 2]; });
       let tapAt = await caseAt();
       await page.mouse.click(tapAt[0], tapAt[1]); await page.waitForTimeout(1100);
       const tapped1 = await page.evaluate(() => bsBottom.state());
@@ -958,7 +980,7 @@ server.listen(0, async () => {
         q('#scEditBtn').click(); await wait(200); o.opts = document.querySelectorAll('.sc-opt').length;
         q('.sc-opt[data-k="shuffle"]').click(); q('.sc-opt[data-k="ach"]').click(); q('.sc-opt[data-k="settings"]').click(); await wait(100);
         q('#scEditBtn').click(); await wait(200);
-        o.tiles = [...document.querySelectorAll('#more .tile')].map(t => t.dataset.cmd).join(); o.saved = localStorage.getItem('bsBottom:shortcuts');
+        o.tiles = [...document.querySelectorAll('#more .tile:not(.add)')].map(t => t.dataset.cmd).join(); o.saved = localStorage.getItem('bsBottom:shortcuts');
         const n = window.__bsSent.length; q('#more .tile[data-cmd="settings"]').click(); o.sent = window.__bsSent.slice(n).map(m => m.cmd).join();
         // (0.3.5) your own: Add → A console asks the shelf for the choices, one tap adds it, its tile sends scRun
         q('#scEditBtn').click(); await wait(150); const n2 = window.__bsSent.length;
@@ -1014,7 +1036,7 @@ server.listen(0, async () => {
       const idle = await page.evaluate(async () => { const a = window.__raf; await new Promise(res => setTimeout(res, 1200));
         return { raf: window.__raf - a, endless: document.getAnimations().filter(x => x.effect && x.effect.getTiming().iterations === Infinity).length }; });
       check('Bottom page: shows a game it is sent (text escaped)', r.title === 'Pikmin <b>&</b> Friends' && r.cover && r.sys === 'GameCube', `${r.title} · cover ${r.cover} · ${r.sys}`);
-      check('Bottom page: Box art (in place of Details) / Trophies / Shortcuts tabs', r.art && r.trophies && r.more, `box art ${r.art}, trophies ${r.trophies}, shortcuts ${r.more}`);
+      check('Bottom page: Box art (under Play) / Trophies / Shortcuts (seven, then Add a shortcut)', r.art && r.trophies && r.more, `box art ${r.art}, trophies ${r.trophies}, shortcuts ${r.more}`);
       check('Bottom page: buttons post the right messages', JSON.stringify(r.sent) === JSON.stringify(['ready', 'cmd:art', 'cmd:shuffle', 'cmd:play']), r.sent.join(', '));
       check('Bottom page: the case starts closed; a tap brings it in close (Inspect), a second tap opens it', !closed.open && closed.pack === 'keep' && tapped1.focus && !tapped1.open && tapped.open && tapped.focus,
         `open ${closed.open} → ${tapped1.open} (focus ${tapped1.focus}) → ${tapped.open}, ${closed.pack}`);
@@ -1022,10 +1044,10 @@ server.listen(0, async () => {
       check('Bottom page: focus view: pinch zooms within limits, without turning; double-tap resets', fv.zIn > 1.3 && fv.zMax === 2.1 && fv.zMin === 0.7 && fv.reset === 1, `zoom ${fv.zIn} / max ${fv.zMax} / min ${fv.zMin} → reset ${fv.reset}`);
       check('Bottom page: Close leaves the focus view (case shut, tabs back)', fv.after && !fv.after.focus && !fv.after.open && fv.after.tabs === 1, JSON.stringify(fv.after));
       check('Bottom page: Art Studio and Game details buttons send art / details', fv.quick === 'art,details', fv.quick);
-      check('Bottom page: Shortcuts: six by default, Edit adds / removes them (kept), a tile sends its command', sc.def === 'play,fav,museum,manual,shuffle,menu' && sc.opts === 12 && sc.tiles === 'fav,museum,manual,menu,ach,settings' && /settings/.test(sc.saved || '') && sc.sent === 'settings',
+      check('Bottom page: Shortcuts: seven by default (Screen off too; up to twelve, beta.12), Edit adds / removes them (kept), a tile sends its command', sc.def === 'play,fav,museum,manual,shuffle,menu,sleep' && sc.opts === 13 && sc.tiles === 'play,fav,museum,manual,menu,sleep,ach,settings' && /settings/.test(sc.saved || '') && sc.sent === 'settings',
         JSON.stringify(sc));
       check('Bottom page (0.3.5): Shortcuts can be your own (Add → a console): asks the shelf, adds the one tapped, its tile sends scRun',
-        sc.asked === 'scOpts:shelf' && sc.items === 1 && sc.optsNow === 13 && /PlayStation/.test(sc.xTile || '') && sc.xSent === 'scRun:shelf:psx', JSON.stringify({ asked: sc.asked, items: sc.items, optsNow: sc.optsNow, tile: sc.xTile, sent: sc.xSent }));
+        sc.asked === 'scOpts:shelf' && sc.items === 1 && sc.optsNow === 14 && /PlayStation/.test(sc.xTile || '') && sc.xSent === 'scRun:shelf:psx', JSON.stringify({ asked: sc.asked, items: sc.items, optsNow: sc.optsNow, tile: sc.xTile, sent: sc.xSent }));
       check('Bottom page: wears the top screen\'s theme (its backdrop, sent with the game)', sc.theme === 'arcade' && sc.tbg, `theme ${sc.theme}, backdrop ${sc.tbg}`);
       check('Bottom page: a tap on the disc shows it on its own (case faded, Put it back), a drag turns it over in 3D, a tap puts it back', solo.on && solo.shown && solo.caseHidden && solo.label && solo.btn && solo.turned && solo.back, JSON.stringify(solo));
       check('Bottom page: drag turns the case both ways; double-tap straightens an open case (face on)', Math.abs(turned.ry - 30) > 30 && Math.abs(turned.rx + 7) > 10 && straight.open && ((straight.ry - 8) % 360 + 360) % 360 < 1 && straight.rx === -4,
@@ -1319,8 +1341,10 @@ server.listen(0, async () => {
         top.pv && top.faces && top.s.view === 'front' && !!top.s.faces.front && top.rowsRight < 1100 && top.dimmed, `set column ${top.pv}, faces ${top.faces}, view ${top.s.view}, front ${!!top.s.faces.front}, rows end at ${top.rowsRight}px, bottom ${top.dual}, dimmed ${top.dimmed}`);
       // (0.3.1) no SteamGridDB key or IGDB sign-in here: the front row ends with a "More art sources" card naming both
       // (0.3.3: and LaunchBox, whose database isn't on this pretend device yet)
-      const more = await page.evaluate(() => { const c = [...document.querySelectorAll('#bsStudio .bst-row.on .bst-card.act')].pop(); return c ? c.querySelector('.cap b').textContent + ' | ' + c.querySelector('.cap span').textContent : null; });
-      check('Art Studio: a "More art sources" card at the end of the front row names the sources not set up', more === 'More art sources | LaunchBox · SteamGridDB · IGDB', String(more));
+      // (beta.12: a card of its own for each, saying what it brings; LaunchBox's downloads right there)
+      const more = await page.evaluate(() => [...document.querySelectorAll('#bsStudio .bst-row.on .bst-card.act')].map(c => c.querySelector('.cap b').textContent + ' | ' + c.querySelector('.cap span').textContent));
+      check('Art Studio: the front row ends with a card for each art source not set up (LaunchBox art to download, SteamGridDB, IGDB), each saying what it brings',
+        more.some(t => /^LaunchBox art \| .*110 MB/.test(t)) && more.some(t => /^SteamGridDB \| /.test(t)) && more.some(t => /^IGDB \| /.test(t)) && !more.some(t => /More art sources/.test(t)), JSON.stringify(more));
       // controller (keyboard here: the same actions): down to Back, right, A puts that version in; L/R-style Tab wraps
       await page.keyboard.press('ArrowDown'); await page.waitForTimeout(2500);
       const s1 = await page.evaluate(() => BS_STUDIO._state()); await page.screenshot({ path: path.join(OUT, '7-art-studio-top-back.png') });
@@ -1532,6 +1556,14 @@ server.listen(0, async () => {
         hud.off.view === 'off' && !hud.off.looping && !hud.off.shown && hud.a.view === 'big' && hud.b.view === 'small' && hud.c.view === 'hidden' && !hud.c.looping && hud.back.view === 'big' && hud.back.looping, JSON.stringify(hud));
       check('Heat pass: no script errors', !errors.length, errors.slice(0, 3).join(' | '));
       await ctx.close(); }
+    // ---------- (beta.12) RomM on the pretend Thor: pairing, the library merged into the shelves, Play downloads first, B stops it (ci/romm-android-pass.js) ----------
+    await require('./romm-android-pass')({ browser, base, check, newPage, OUT });
+    // (beta.12) readable on the Thor: Automatic text size, Largest, the shelf / Details labels, the bottom screen's buttons (ci/textsize-test.js)
+    await require('./textsize-test')({ browser, base, check, newPage, OUT });
+    // (beta.12) the bottom screen's companions (reading, Find, Details), Consoles, Apps and Screen off (ci/bottom-companion-test.js)
+    await require('./bottom-companion-test')({ browser, base, check, newPage, OUT });
+    // (beta.12) Thor touch: a double tap picks the case up, a swipe up opens Details, down closes it (ci/touch-gestures-test.js)
+    await require('./touch-gestures-test')({ browser, base, check, newPage, OUT });
     } // ===== end of group thor =====
     if (runs('screens')) { // ===== group screens: passes 10-17 =====
     // ---------- pass 10: magazines & guides (0.3.2): the store, downloads, the reading corner (ci/reading-test.js) ----------
@@ -1551,6 +1583,14 @@ server.listen(0, async () => {
     await require('./pcgames-test')({ browser, base, check, newPage, OUT });
     // ---------- pass 17: other Android screens (0.4.0): a 20:9 phone, a small phone, a 16:10 tablet (ci/screens-test.js) ----------
     await require('./screens-test')({ browser, base, check, newPage, OUT });
+    // (0.5) phones, tablets and foldables upright and on their side, the Thor unchanged; a rotation relays out once (ci/portrait-test.js)
+    await require('./portrait-test')({ browser, base, check, newPage, OUT });
+    // (beta.12) manuals and guides readable on small screens: zoom, pan, one page, the page kept, pinch (ci/reader-zoom-test.js)
+    await require('./reader-zoom-test')({ browser, base, check, newPage, OUT });
+    // (beta.12) Android Details: the trailer's sound button and the screenshot viewer (ci/android-media-test.js)
+    await require('./android-media-test')({ browser, base, check, newPage, OUT });
+    // (beta.12) a game's own emulator and core on Android (ci/gameemu-test.js)
+    await require('./gameemu-test')({ browser, base, check, newPage, OUT });
     } // ===== end of group screens =====
     if (runs('windows')) { // ===== group windows: passes 18-24 =====
     // ---------- pass 18: the retro shelves (beta.6): PlayStation, NES … Dreamcast through RetroArch (ci/retro-test.js) ----------
@@ -1570,6 +1610,37 @@ server.listen(0, async () => {
     // ---------- pass 25 (beta.11): DuckStation under any of its names, DeSmuME, mGBA and VisualBoyAdvance-M found and started with their own options (ci/emu-names-test.js, plain Node) ----------
     { const r = require('child_process').spawnSync(process.execPath, [require('path').join(__dirname, 'emu-names-test.js')], { encoding: 'utf8', timeout: 60000 });
       check('Other emulators (DuckStation builds, DeSmuME, mGBA, VisualBoyAdvance-M) are found and get their own launch options', r.status === 0, ((r.stdout || '') + (r.stderr || '')).split('\n').filter(l => /FAIL|Error/.test(l)).slice(0, 4).join(' | ')); }
+    // ---------- (beta.12) RocketLauncher: its systems, names, command line, log and launch (ci/rocket-test.js, plain Node) ----------
+    { const r = require('child_process').spawnSync(process.execPath, [require('path').join(__dirname, 'rocket-test.js')], { encoding: 'utf8', timeout: 60000 });
+      check('RocketLauncher: its systems and ROM folders are read, each console gets its name, the command line is right (by name or full path, never -f), a run\'s error is read from its log', r.status === 0, ((r.stdout || '') + (r.stderr || '')).split('\n').filter(l => /FAIL|Error/.test(l)).slice(0, 4).join(' | ')); }
+    // ---------- (beta.12) RomM: the client against a pretend RomM server (ci/romm-test.js, plain Node), then Settings and the shelf (ci/romm-ui-test.js) ----------
+    { const r = require('child_process').spawnSync(process.execPath, [require('path').join(__dirname, 'romm-test.js')], { encoding: 'utf8', timeout: 240000 });
+      check('RomM client: pairing (QR device flow and code), the library first and then only what changed, offline from the saved copy, covers once, resumable checked downloads, multi-file games unpacked safely', r.status === 0, ((r.stdout || '') + (r.stderr || '')).split('\n').filter(l => /FAIL|Error/.test(l)).slice(0, 4).join(' | ')); }
+    await require('./romm-ui-test')({ browser, base, check, newPage, OUT });
+    // (beta.12) Minus / View: Details on Windows (held: the museum), Settings on the Thor (ci/minus-test.js)
+    await require('./minus-test')({ browser, base, check, newPage, OUT });
+    // (beta.12) the Art Studio's Spine page: an "Up close" strip, short wide cards, the neighbours shelf bigger (ci/spinepage-test.js)
+    await require('./spinepage-test')({ browser, base, check, newPage, OUT });
+    // (beta.12) the Art Studio shows what it has while a slow source is still answering; the late version joins (ci/artlate-test.js)
+    await require('./artlate-test')({ browser, base, check, newPage, OUT });
+    // (beta.12) attract mode unfocused / pace / one shelf, and a controller's stale first press (ci/attract-test.js)
+    await require('./attract-test')({ browser, base, check, newPage, OUT });
+    // (beta.12) the quick menu's start-up warm-up is never seen sliding away (ci/qmwarm-test.js)
+    await require('./qmwarm-test')({ browser, base, check, newPage, OUT });
+    // (beta.12) Linux / Steam Deck: the "Leaving a game" card, Start at login, Power through systemctl (ci/linuxqol-test.js)
+    await require('./linuxqol-test')({ browser, base, check, newPage, OUT });
+    // (beta.12) Details' screenshot viewer: A opens one full screen, left / right go through them, B back (ci/shotview-test.js)
+    await require('./shotview-test')({ browser, base, check, newPage, OUT });
+    // (beta.12) Reduce motion: the system's animation switch no longer stops the shelf sliding (ci/motion-test.js)
+    await require('./motion-test')({ browser, base, check, newPage, OUT });
+    // (beta.12) the achievements screen: a badge wall with rarity rims and a card for the one you're on (ci/achwall-test.js)
+    await require('./achwall-test')({ browser, base, check, newPage, OUT });
+    // (beta.12) Linux Game Mode's own file / folder browser, and the Linux tour's "Leaving a game" (ci/picker-test.js)
+    await require('./picker-test')({ browser, base, check, newPage, OUT });
+    // (beta.12, every platform) Find a game: the Search button, the quick menu's first row, typing, the letter grid (ci/find-test.js)
+    await require('./find-test')({ browser, base, check, newPage, OUT });
+    { const r = require('child_process').spawnSync(process.execPath, [require('path').join(__dirname, 'artlate-main-test.js')], { encoding: 'utf8', timeout: 60000 });
+      check('Art Studio sources (main): the list goes back after 1.2 s with what answered, slow sources join as late cards then listDone, a reopen reuses the list, fresh asks again', r.status === 0, ((r.stdout || '') + (r.stderr || '')).split('\n').filter(l => /FAIL|Error/.test(l)).slice(0, 4).join(' | ')); }
     // ---------- pass 26 (beta.11): the shelf tour on Windows, from Settings → Shelf; never on Android (ci/tour-test.js) ----------
     await require('./tour-test')({ browser, base, check, newPage, OUT });
     // (beta.11) console trailers: a dead or missing trailer link gets YouTube searched for one (ci/ytsearch-test.js, plain Node)
@@ -1578,6 +1649,11 @@ server.listen(0, async () => {
     // (beta.11) magazine downloads: a crawling connection is picked up again from where it got to (ci/archive-speed-test.js, plain Node)
     { const r = require('child_process').spawnSync(process.execPath, [require('path').join(__dirname, 'archive-speed-test.js')], { encoding: 'utf8', timeout: 90000 });
       check('Magazine downloads: a crawling connection is dropped and carries on from where it got to; the file arrives whole', r.status === 0, ((r.stdout || '') + (r.stderr || '')).split('\n').filter(l => /FAIL|Error/.test(l)).slice(0, 4).join(' | ')); }
+    // (beta.12) Seamless play: Steam and store games watched, never a launcher closed, the 90 s give-up, nothing polled when idle (ci/gamewatch-test.js, plain Node)
+    { const r = require('child_process').spawnSync(process.execPath, [require('path').join(__dirname, 'gamewatch-test.js')], { encoding: 'utf8', timeout: 60000 });
+      check('Seamless play: Steam / store games are watched (started, ended, launcher hand-over, 90 s give-up), close() never touches a launcher, nothing polls when idle', r.status === 0, ((r.stdout || '') + (r.stderr || '')).split('\n').filter(l => /FAIL|Error/.test(l)).slice(0, 4).join(' | ')); }
+    // ---------- pass 27 (beta.12): Seamless play on the Windows page: a watched Steam game, Settings rows, the Home menu's Go to desktop (ci/seamless-pass.js) ----------
+    await require('./seamless-pass')({ browser, base, check, newPage, OUT });
     } // ===== end of group windows =====
     check('Every file the page loads is in the APK', !missing.size, [...missing].join(', '));
   } catch (e) { check('Test ran to the end', false, e && e.stack ? e.stack.split('\n').slice(0, 2).join(' ') : e); }

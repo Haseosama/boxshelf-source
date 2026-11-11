@@ -380,7 +380,7 @@ const breath = () => new Promise(r => setImmediate(r));
 // a write that fails half-way (disk full) takes this run's pages back out: a partial manual would look finished and its
 // PDF would never be converted again
 async function writePages(dir, base, pages) { let n = 0; const made = [];
-  try { for (let i = 0; i < (pages || []).length; i++) { const m = /^data:image\/(jpeg|png);base64,(.+)$/.exec(pages[i]); if (!m) continue; const f = path.join(dir, `${base}-manual-${String(i + 1).padStart(2, '0')}.${m[1] === 'png' ? 'png' : 'jpg'}`); made.push(f); await fs.promises.writeFile(f, Buffer.from(m[2], 'base64')); n++; await breath(); } }
+  try { for (let i = 0; i < (pages || []).length; i++) { const m = /^data:image\/(jpeg|png);base64,(.+)$/.exec(pages[i]); if (!m) continue; const f = path.join(dir, `${base}-manual-${String(i + 1).padStart(2, '0')}.${m[1] === 'png' ? 'png' : 'jpg'}`); made.push(f); const tmp = f + '.part'; try { await fs.promises.writeFile(tmp, Buffer.from(m[2], 'base64')); await fs.promises.rename(tmp, f); } catch (e) { await fs.promises.unlink(tmp).catch(() => {}); throw e; } n++; await breath(); } } // (beta.12) temp + rename: a crash mid-page leaves no cut-off page that counts as a manual
   catch (e) { for (const f of made) await fs.promises.unlink(f).catch(() => {}); throw e; }
   return n; }
 async function savePages(cfg, file, pages, done, complete) {
